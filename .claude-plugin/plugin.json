@@ -1,0 +1,6 @@
+{
+  "name": "intermission",
+  "version": "0.0.1",
+  "description": "Play Doom deathmatch while Claude works",
+  "author": { "name": "Jarrod Watts" }
+}
