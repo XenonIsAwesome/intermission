@@ -1,6 +1,11 @@
 # intermission
 
-Play Doom deathmatch while Claude works.
+A Claude Code plugin that drops you into Doom deathmatch while Claude works, and hands you back when it's done.
+
+[![License](https://img.shields.io/github/license/jarrodwatts/intermission)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/jarrodwatts/intermission)](https://github.com/jarrodwatts/intermission/stargazers)
+
+![intermission in action](intermission-preview.png)
 
 When Claude has been working for two seconds, a pane opens beside the
 transcript and you drop into a free-for-all on a shared server with everyone
