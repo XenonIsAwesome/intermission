@@ -24,6 +24,7 @@ jobs:
       FREEDOOM: https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
       # The same freedoom2.wad the server runs, or players can't join
       FREEDOOM2_SHA256: a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b
+      SDL2_MIXER: SDL2_mixer-2.8.2
       PACKAGE: intermission-engine-macos-${{ matrix.arch }}.tar.gz
     steps:
       - uses: actions/checkout@v5
@@ -32,7 +33,20 @@ jobs:
         run: test "v$(jq -r .version .claude-plugin/plugin.json)" = "$GITHUB_REF_NAME"
 
       - name: Install build tools
-        run: brew install sdl2 sdl2_mixer dylibbundler
+        run: brew install sdl2 dylibbundler
+
+      # Doom's sounds are raw samples and Odamex plays music through macOS, so
+      # none of the codecs Homebrew's SDL2_mixer brings are needed, nor their
+      # licenses, some of them GPL-3 and LGPL
+      - name: Build SDL2_mixer without codecs
+        run: |
+          curl -fsSL "https://github.com/libsdl-org/SDL_mixer/releases/download/release-${SDL2_MIXER#SDL2_mixer-}/$SDL2_MIXER.tar.gz" | tar -xz
+          cmake -S "$SDL2_MIXER" -B mixer-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/mixer" \
+            -DSDL2MIXER_SAMPLES=OFF -DSDL2MIXER_CMD=OFF -DSDL2MIXER_FLAC=OFF -DSDL2MIXER_GME=OFF \
+            -DSDL2MIXER_MOD=OFF -DSDL2MIXER_MP3=OFF -DSDL2MIXER_MIDI=OFF -DSDL2MIXER_OPUS=OFF \
+            -DSDL2MIXER_VORBIS=OFF -DSDL2MIXER_WAVPACK=OFF
+          cmake --build mixer-build -j3
+          cmake --install mixer-build
 
       - name: Get Odamex with our changes
         run: |
@@ -41,13 +55,17 @@ jobs:
           git -C odamex submodule update -q --init --recursive --depth 1
           git -C odamex apply ../engine/odamex.patch
 
+      # libpng and zstd built in rather than bundled from Homebrew
       - name: Build
         run: |
           cmake -S odamex -B odamex/build -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_CLIENT=1 -DBUILD_SERVER=0 -DBUILD_LAUNCHER=0 -DBUILD_TESTS=0 -DODAMEX_NO_GITVER=1
+            -DBUILD_CLIENT=1 -DBUILD_SERVER=0 -DBUILD_LAUNCHER=0 -DBUILD_TESTS=0 -DODAMEX_NO_GITVER=1 \
+            -DUSE_INTERNAL_PNG=1 -DUSE_INTERNAL_ZSTD=1 \
+            -DSDL2_MIXER_INCLUDE_DIR="$PWD/mixer/include/SDL2" \
+            -DSDL2_MIXER_LIBRARY="$PWD/mixer/lib/libSDL2_mixer-2.0.0.dylib"
           cmake --build odamex/build -j3
 
-      # Copies the Homebrew libraries into the app, so players need no Homebrew.
+      # Copies the libraries into the app, so players need no Homebrew.
       # Homebrew's SDL2 is sdl2-compat, which loads SDL3 at startup rather than
       # linking it, so the bundler can't see it: put SDL3 where sdl2-compat
       # looks first, beside itself. Without it, SDL2 waits on an error dialog
@@ -55,7 +73,8 @@ jobs:
       - name: Bundle libraries
         run: |
           app=odamex/build/client/odamex.app
-          dylibbundler -od -b -x "$app/Contents/MacOS/odamex" -d "$app/Contents/libs" -p @executable_path/../libs/
+          dylibbundler -od -b -x "$app/Contents/MacOS/odamex" -d "$app/Contents/libs" \
+            -p @executable_path/../libs/ -s "$PWD/mixer/lib"
           cp "$(brew --prefix sdl3)/lib/libSDL3.0.dylib" "$app/Contents/libs/libSDL3.dylib"
           chmod u+w "$app/Contents/libs/libSDL3.dylib"
           install_name_tool -id @loader_path/libSDL3.dylib "$app/Contents/libs/libSDL3.dylib"
@@ -66,20 +85,39 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p package freedoom
+          mkdir -p package/licenses freedoom
           cp -R odamex/build/client/odamex.app package/
           curl -fsSL -o freedoom.zip "$FREEDOOM"
           unzip -q -j freedoom.zip '*/freedoom2.wad' '*/COPYING.txt' -d freedoom
           echo "$FREEDOOM2_SHA256  freedoom/freedoom2.wad" | shasum -a 256 -c
           cp freedoom/freedoom2.wad package/
-          cp freedoom/COPYING.txt package/FREEDOOM-COPYING.txt
-          cp odamex/LICENSE package/ODAMEX-LICENSE.txt
+
+          # Every license of what the engine contains, built in or bundled
+          cp odamex/LICENSE package/licenses/odamex.txt
+          cp odamex/3RD-PARTY-LICENSES package/licenses/odamex-third-party.txt
+          for license in libpng/LICENSE fltk/COPYING minilzo/COPYING jsoncpp/LICENSE fmt/LICENSE \
+            protobuf/LICENSE portmidi/license.txt cpptrace/LICENSE libadlmidi/LICENSE libadlmidi/LICENSE.GPL-3.txt; do
+            cp "odamex/libraries/$license" "package/licenses/$(dirname "$license")-$(basename "$license")"
+          done
+          cp odamex/build/libraries/cpptrace-build/_deps/zstd-src/LICENSE package/licenses/zstd.txt
+          cp "$(brew --prefix sdl2-compat)/LICENSE.txt" package/licenses/sdl2-compat.txt
+          cp "$(brew --prefix sdl3)/LICENSE.txt" package/licenses/sdl3.txt
+          cp "$SDL2_MIXER/LICENSE.txt" package/licenses/sdl2-mixer.txt
+          cp freedoom/COPYING.txt package/licenses/freedoom.txt
+          cat > package/SOURCE.txt <<EOF
+          This engine is Odamex at commit $(cat engine/odamex-commit) with the changes in
+          https://github.com/jarrodwatts/intermission/blob/$GITHUB_REF_NAME/engine/odamex.patch applied.
+          Odamex's source, with the libraries it builds in, is at https://github.com/odamex/odamex.
+          SDL is at https://github.com/libsdl-org. The licenses are in licenses/.
+          EOF
 
       # A packaged engine that never draws a frame would ship looking fine. The
       # runner's macOS can let a broken library signature pass that a player's
-      # newer macOS won't, so check those too.
-      - name: Check the packaged engine draws frames
+      # newer macOS won't, so check those too, and that nothing new got bundled
+      # whose license isn't in the package.
+      - name: Check the packaged engine
         run: |
+          test "$(ls package/odamex.app/Contents/libs | tr '\n' ' ')" = "libSDL2-2.0.0.dylib libSDL2_mixer-2.0.0.dylib libSDL3.dylib "
           codesign --verify --strict package/odamex.app/Contents/libs/*.dylib package/odamex.app
           printf '1 0\n' > input.txt
           SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy \
