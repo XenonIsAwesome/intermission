@@ -1,17 +1,18 @@
-// Plays Doom in a pane. This first cut opens on /intermission and shows the
-// engine's frames; input, multiplayer and the turn triggers come next.
+// Plays Doom in a pane. This cut opens on /intermission, shows the engine's
+// frames and passes keys and the mouse through; multiplayer and the turn
+// triggers come next.
 
 const PANE = 'intermission'
 const WIDTH = 640
 const HEIGHT = 360
 
-// The running engine's output stream, and the newest frame it wrote
+// The running engine's output stream, the newest frame it wrote, and the file
+// it reads input from
 let engine = null
 let frame = null
+let inputPath = null
 
-function engineRequest(root) {
-  // A per-run prefix keeps two sessions' frames from colliding in shared memory
-  const prefix = '/im' + Math.random().toString(36).slice(2, 6) + '-'
+function engineRequest(root, id) {
   return {
     argv: [
       root + '/dist/odamex.app/Contents/MacOS/odamex',
@@ -25,13 +26,18 @@ function engineRequest(root) {
     env: {
       SDL_VIDEODRIVER: 'dummy',
       SDL_RENDER_DRIVER: 'software',
-      INTERMISSION_FRAMES: prefix,
+      // A per-run name keeps two sessions' frames from colliding
+      INTERMISSION_FRAMES: '/im' + id + '-',
+      INTERMISSION_INPUT: inputPath,
     },
   }
 }
 
 async function runEngine($) {
-  engine = $.process.spawn(engineRequest($.plugin.root))
+  const id = Math.random().toString(36).slice(2, 6)
+  inputPath = '/tmp/intermission-' + id + '.input'
+  await $.fs.write(inputPath, '0\n')
+  engine = $.process.spawn(engineRequest($.plugin.root, id))
   let pending = ''
   try {
     for await (const { stream, text } of engine) {
@@ -54,6 +60,7 @@ async function runEngine($) {
   } finally {
     engine = null
     frame = null
+    inputPath = null
   }
 }
 
@@ -68,7 +75,7 @@ export function register(on) {
   })
 
   on('command.run', { command: 'intermission' }, async ($) => {
-    await $.ui.open({ id: PANE, title: 'intermission', focus: true, closeOnEscape: true, rows: 32 })
+    await $.ui.open({ id: PANE, title: 'intermission', focus: true, closeOnEscape: true, rows: 34 })
     if (!engine) void runEngine($)
     return {}
   })
@@ -79,14 +86,35 @@ export function register(on) {
     return next(e)
   })
 
+  on('ui.message', async ($, e) => {
+    if (e.element === 'input' && inputPath) await $.fs.write(inputPath, e.data.line + '\n')
+    return {}
+  })
+
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
-    const { Text, Image } = $.ui.resolve(e)
+    const { Box, Text, Image, Client } = $.ui.resolve(e)
     if (e.surface !== 'terminal') return Text({ children: ['intermission needs the terminal, in Ghostty or kitty.'] })
     if (!frame) return Text({ children: ['Loading…'] })
     // Terminal cells are about twice as tall as they are wide
     const columns = Math.min(255, e.props.bodyColumns)
     const rows = Math.max(1, Math.round((columns * HEIGHT) / WIDTH / 2))
-    return Image({ key: 'view', source: shmSource(frame), columns, rows, alt: 'Doom' })
+    return Box({
+      flexDirection: 'column',
+      children: [
+        Image({ key: 'view', source: shmSource(frame), columns, rows, alt: 'Doom' }),
+        // Laid over the picture, so clicks and the pointer land on the game
+        Box({
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          children: [Client({ key: 'input', module: './input.js', width: columns, height: rows })],
+        }),
+        Text({
+          dimColor: true,
+          children: ['Click the game to play · WASD or arrows · mouse left/right to turn · left click fires · right click runs · space opens · Esc stops'],
+        }),
+      ],
+    })
   })
 }
