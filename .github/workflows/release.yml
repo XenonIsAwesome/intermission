@@ -59,7 +59,10 @@ jobs:
           cp "$(brew --prefix sdl3)/lib/libSDL3.0.dylib" "$app/Contents/libs/libSDL3.dylib"
           chmod u+w "$app/Contents/libs/libSDL3.dylib"
           install_name_tool -id @loader_path/libSDL3.dylib "$app/Contents/libs/libSDL3.dylib"
-          codesign --force --deep --sign - "$app"
+          # --deep skips libs/, which isn't a place macOS looks for nested code,
+          # and macOS kills a process that loads a library whose signature broke
+          codesign --force --sign - "$app"/Contents/libs/*.dylib
+          codesign --force --sign - "$app"
 
       - name: Package
         run: |
@@ -72,9 +75,12 @@ jobs:
           cp freedoom/COPYING.txt package/FREEDOOM-COPYING.txt
           cp odamex/LICENSE package/ODAMEX-LICENSE.txt
 
-      # A packaged engine that never draws a frame would ship looking fine
+      # A packaged engine that never draws a frame would ship looking fine. The
+      # runner's macOS can let a broken library signature pass that a player's
+      # newer macOS won't, so check those too.
       - name: Check the packaged engine draws frames
         run: |
+          codesign --verify --strict package/odamex.app/Contents/libs/*.dylib package/odamex.app
           printf '1 0\n' > input.txt
           SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy \
             INTERMISSION_FRAMES=/imci- INTERMISSION_INPUT="$PWD/input.txt" \
