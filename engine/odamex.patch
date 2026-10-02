@@ -18,17 +18,18 @@ index 8ecd952..79af2fc 100644
  # Client target
 diff --git a/client/sdl/i_frameexport.cpp b/client/sdl/i_frameexport.cpp
 new file mode 100644
-index 0000000..a6eaa8a
+index 0000000..24e5960
 --- /dev/null
 +++ b/client/sdl/i_frameexport.cpp
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,119 @@
 +// Exports each finished frame for the intermission Claude Code mod.
 +//
 +// When INTERMISSION_FRAMES names a shared-memory prefix (such as "/im"), every
 +// frame is written as raw RGB into a fresh POSIX shared-memory object and its
 +// name printed on stdout. The terminal reads the object and unlinks it, so no
 +// pixel passes through the mod. The player's score is printed alongside
-+// whenever it changes. Without the variable this does nothing.
++// whenever it changes, and why, if the server sends this client away. Without
++// the variable this does nothing.
 +
 +#include "odamex.h"
 +
@@ -61,6 +62,19 @@ index 0000000..a6eaa8a
 +// A frame the terminal never read is never unlinked by it, so the oldest
 +// leftovers are removed here once this many newer frames exist.
 +static const unsigned FRAMES_IN_FLIGHT = 8;
++
++void I_ReportDisconnect(const char* reason)
++{
++	if (!getenv("INTERMISSION_FRAMES"))
++		return;
++	// One line, however the server worded it
++	printf("@disconnected ");
++	for (const char* c = reason; *c; c++)
++		if (*c != '\n')
++			putchar(*c);
++	putchar('\n');
++	fflush(stdout);
++}
 +
 +static void frameName(char* out, size_t size, const char* prefix, unsigned frame)
 +{
@@ -129,15 +143,18 @@ index 0000000..a6eaa8a
 +}
 diff --git a/client/sdl/i_frameexport.h b/client/sdl/i_frameexport.h
 new file mode 100644
-index 0000000..0e9e8ca
+index 0000000..5547af1
 --- /dev/null
 +++ b/client/sdl/i_frameexport.h
-@@ -0,0 +1,5 @@
+@@ -0,0 +1,8 @@
 +#pragma once
 +
 +class IWindowSurface;
 +
 +void I_ExportFrame(const IWindowSurface* surface);
++
++// Tells the mod why the server sent this client away, such as being full
++void I_ReportDisconnect(const char* reason);
 diff --git a/client/sdl/i_input.cpp b/client/sdl/i_input.cpp
 index ec42dca..d805509 100644
 --- a/client/sdl/i_input.cpp
@@ -433,3 +450,23 @@ index ee3c799..d702cdc 100644
  	SDL_RenderCopy(mSDLRenderer, mSDLTexture, nullptr, nullptr);
  
  	SDL_RenderPresent(mSDLRenderer);
+diff --git a/client/src/cl_parse.cpp b/client/src/cl_parse.cpp
+index c4634e0..5d5d2b2 100644
+--- a/client/src/cl_parse.cpp
++++ b/client/src/cl_parse.cpp
+@@ -66,6 +66,7 @@
+ #include "cl_replay.h"
+ #include "r_interp.h"
+ #include "m_doomobjcontainer.h"
++#include "i_frameexport.h"
+ #include "g_spree.h"
+ #include "g_multikill.h"
+ #include "cl_freecam.h"
+@@ -207,6 +208,7 @@ static void CL_Disconnect(const odaproto::svc::Disconnect* msg)
+ 	{
+ 		PrintFmt("Disconnected from server\n");
+ 	}
++	I_ReportDisconnect(msg->message().c_str());
+ 
+ 	CL_QuitNetGame(NQ_SILENT);
+ }

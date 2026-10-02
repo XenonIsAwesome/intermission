@@ -181,6 +181,11 @@ async function runEngine($) {
       const lines = (pending + text).split('\n')
       pending = lines.pop()
       for (const line of lines) {
+        const sentAway = /^@disconnected (.*)/.exec(line)
+        if (sentAway) {
+          failure = 'intermission was disconnected' + (sentAway[1] ? ': ' + sentAway[1] : '')
+          break
+        }
         const scored = /^@score (\d+) (\d+)/.exec(line)
         if (scored) {
           score = { kills: Number(scored[1]), deaths: Number(scored[2]) }
@@ -197,6 +202,8 @@ async function runEngine($) {
           $.ui.blit({ requestId: PANE, key: 'view', source: shmSource(frame) }).catch(() => {})
         }
       }
+      // Leaving the loop is what stops the engine
+      if (failure) break
     }
   } catch (error) {
     $.ui.log('the game did not start: ' + error, { to: 'debug' })
@@ -206,9 +213,10 @@ async function runEngine($) {
     frame = null
     inputPath = null
   }
-  // Ending on its own while someone plays means the engine quit or crashed.
+  // Ending on its own while someone plays means the engine quit, crashed or was
+  // sent away; while they're away, the next drop-in simply starts it again.
   // It also ends when this module unloads, and then there's nothing to close.
-  if (failure || phase === 'playing' || phase === 'countdown') {
+  if (phase === 'playing' || phase === 'countdown') {
     try {
       $.ui.toast(failure ?? 'intermission lost the game')
       await pullOut($)
