@@ -382,7 +382,7 @@ export function register(on) {
     await $.command.register({
       name: 'intermission',
       description: 'Play Doom while Claude works',
-      argumentHint: '[off | sensitivity <number>]',
+      argumentHint: '[off | play | sensitivity <number>]',
     })
     return next(e)
   })
@@ -399,6 +399,26 @@ export function register(on) {
       if (phase !== 'idle') await pullOut($)
       await stopEngine($)
       return { text: 'sensitivity is now ' + value + '.' }
+    }
+    if (e.args.trim() === 'play') {
+      if (phase === 'playing' || phase === 'countdown') return { text: "You're already in the game." }
+      if (phase === 'waiting' || phase === 'offered') withdrawOffer($)
+      if (!(await $.fs.exists(enginePath($.plugin.root)))) {
+        // The welcome pane shows how the download goes
+        isWelcomeOpen = true
+        await $.ui.open({ id: PANE, title: 'intermission' })
+        await ensureEngine($)
+        isWelcomeOpen = false
+        if (!(await $.fs.exists(enginePath($.plugin.root)))) {
+          await $.ui.close({ id: PANE })
+          return { text: downloadStatus ?? "Couldn't get the game." }
+        }
+      }
+      isWelcomeOpen = false
+      // Playing doesn't need Claude to be working, or intermission to be on
+      phase = 'waiting'
+      await dropIn($)
+      return {}
     }
     if (e.args.trim() === 'off') {
       isOn = false

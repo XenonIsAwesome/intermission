@@ -16,7 +16,8 @@
 //
 // Control keys:  1  Claude starts working      2  Claude finishes
 //                3  Claude asks permission     4  you answer, Claude carries on
-//                5  you close the pane         Ctrl+C  quit
+//                5  you close the pane         6  /intermission play
+//                Ctrl+C  quit
 // Game keys (through the real hooks/input.js, so held keys behave as they do
 // in Claude Code):  WASD or arrows move, space opens, j fires, k runs.
 // Click the game with the mouse, as in Claude Code: that locks the real mouse
@@ -309,6 +310,7 @@ if (!isAuto) {
     if (k === '3') await claude.askPermission()
     if (k === '4') await claude.carryOn()
     if (k === '5') await claude.personCloses()
+    if (k === '6') state.toast = ((await emit('command.run', { command: 'intermission', args: 'play' }, {})).text) ?? ''
     if (state.paneOpen) gameKey(k)
   })
   // A fixed block at the bottom, cleared whole each time, every line cut to the
@@ -321,7 +323,7 @@ if (!isAuto) {
       `Claude: ${state.turnRunning ? 'WORKING' : 'idle'}   pane: ${state.paneOpen ? 'open' : 'closed'}   input file: "${readInput()}"`,
       ...state.texts.map((t) => '  ' + t),
       state.toast ? 'toast: ' + state.toast : '',
-      '[1] start working  [2] finish  [3] permission ask  [4] answer  [5] close pane  [Ctrl+C] quit',
+      '[1] start working  [2] finish  [3] permission ask  [4] answer  [5] close pane  [6] /intermission play  [Ctrl+C] quit',
       'game: WASD/arrows, space, click to lock the mouse (Esc or Super releases), j fire, k run',
     ].slice(-STATUS_ROWS)
     let out = '\x1b7'
@@ -389,6 +391,17 @@ async function cycle(n, { withPermission }) {
 }
 
 if (isAuto) {
+  console.log('/intermission play, with Claude idle')
+  await emit('command.run', { command: 'intermission', args: 'play' }, {})
+  await sleep(3000)
+  check(state.paneOpen, 'the pane opens with no turn running')
+  check(state.frame !== null, 'a game frame arrived')
+  check(readInput().startsWith('1 '), `engine told to play (file: "${readInput()}")`)
+  await sleep(2500)
+  check(state.paneOpen, 'it stays open, with no countdown to close it')
+  await claude.personCloses()
+  await sleep(500)
+  check(readInput() === '0 0', `engine told to stop once the pane closes (file: "${readInput()}")`)
   const all = []
   all.push(await cycle(1, { withPermission: false }))
   all.push(await cycle(2, { withPermission: true }))

@@ -34,6 +34,9 @@ maps, with monsters left in so the server is never empty.
 
 To turn it off again, run `/intermission off`.
 
+To play without waiting for Claude, run `/intermission play`. It opens the game
+straight away, whether or not Claude is working.
+
 ## Requirements
 
 - macOS 15 or later, on Apple silicon or Intel, or Linux on x86_64 or arm64
