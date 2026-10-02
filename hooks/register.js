@@ -99,6 +99,8 @@ async function startPlaying($) {
   $.ui.invalidate('ui.render')
   awayTimer?.cancel()
   awayTimer = null
+  // Frames from before this drop-in are gone; wait for a fresh one
+  frame = null
   if (engine) await writeInput($)
   else void runEngine($)
 }
@@ -290,6 +292,8 @@ async function runEngine($) {
         }
         const match = /^@frame (\S+)/.exec(line)
         if (!match) continue
+        // A frame written as the person was handed back has no pane to go to
+        if (phase !== 'playing' && phase !== 'countdown') continue
         const isFirst = frame === null
         frame = match[1]
         if (isFirst) {
