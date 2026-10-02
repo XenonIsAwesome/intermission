@@ -311,15 +311,25 @@ if (!isAuto) {
     if (k === '5') await claude.personCloses()
     if (state.paneOpen) gameKey(k)
   })
+  // A fixed block at the bottom, cleared whole each time, every line cut to the
+  // width so nothing wraps and scrolls the screen
+  const STATUS_ROWS = 6
   setInterval(() => {
     const rows = process.stdout.rows || 40
+    const columns = (process.stdout.columns || 80) - 1
     const lines = [
       `Claude: ${state.turnRunning ? 'WORKING' : 'idle'}   pane: ${state.paneOpen ? 'open' : 'closed'}   input file: "${readInput()}"`,
-      ...state.texts.map((t) => '  ' + t.slice(0, (process.stdout.columns || 80) - 4)),
+      ...state.texts.map((t) => '  ' + t),
       state.toast ? 'toast: ' + state.toast : '',
-      '[1] start working  [2] finish  [3] permission ask  [4] answer  [5] close pane  [Ctrl+C] quit   game: WASD/arrows, space, click to lock mouse (j/k also fire/run)',
-    ]
-    process.stdout.write('\x1b7' + lines.map((l, i) => `\x1b[${rows - lines.length + 1 + i};1H\x1b[2K${l}`).join('') + '\x1b8')
+      '[1] start working  [2] finish  [3] permission ask  [4] answer  [5] close pane  [Ctrl+C] quit',
+      'game: WASD/arrows, space, click to lock the mouse (Esc or Super releases), j fire, k run',
+    ].slice(-STATUS_ROWS)
+    let out = '\x1b7'
+    for (let i = 0; i < STATUS_ROWS; i++) {
+      const line = (lines[i] ?? '').slice(0, columns)
+      out += `\x1b[${rows - STATUS_ROWS + 1 + i};1H\x1b[2K${line}`
+    }
+    process.stdout.write(out + '\x1b8')
   }, 200)
 }
 
