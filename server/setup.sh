@@ -11,7 +11,7 @@ FREEDOOM=https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom
 FREEDOOM2_SHA256=a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b
 
 apt-get update -q
-apt-get install -yq build-essential cmake git curl unzip
+apt-get install -yq build-essential cmake git curl unzip zlib1g-dev libzstd-dev
 
 id odamex >/dev/null 2>&1 || useradd --system --home-dir "$APP" --shell /usr/sbin/nologin odamex
 install -d -o odamex "$APP"

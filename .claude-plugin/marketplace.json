@@ -1,0 +1,6 @@
+{
+  "name": "intermission",
+  "description": "Doom deathmatch while Claude works",
+  "owner": { "name": "Jarrod Watts" },
+  "plugins": [{ "name": "intermission", "source": "./" }]
+}

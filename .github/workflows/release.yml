@@ -1,0 +1,75 @@
+# Builds the engine for each kind of Mac and attaches it to the GitHub release
+# for the tag; the mod downloads the one it needs on first use. Tag a release
+# as v<version>, matching plugin.json.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  engine:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      FREEDOOM: https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
+      # The same freedoom2.wad the server runs, or players can't join
+      FREEDOOM2_SHA256: a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b
+      PACKAGE: intermission-engine-macos-${{ matrix.arch }}.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches plugin.json
+        run: test "v$(jq -r .version .claude-plugin/plugin.json)" = "$GITHUB_REF_NAME"
+
+      - name: Install build tools
+        run: brew install sdl2 sdl2_mixer dylibbundler
+
+      - name: Get Odamex with our changes
+        run: |
+          git clone -q https://github.com/odamex/odamex.git odamex
+          git -C odamex checkout -q "$(cat engine/odamex-commit)"
+          git -C odamex submodule update -q --init --recursive --depth 1
+          git -C odamex apply ../engine/odamex.patch
+
+      - name: Build
+        run: |
+          cmake -S odamex -B odamex/build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=1 -DBUILD_SERVER=0 -DBUILD_LAUNCHER=0 -DBUILD_TESTS=0 -DODAMEX_NO_GITVER=1
+          cmake --build odamex/build -j3
+
+      # Copies the Homebrew libraries into the app, so players need no Homebrew
+      - name: Bundle libraries
+        run: |
+          app=odamex/build/client/odamex.app
+          dylibbundler -od -b -x "$app/Contents/MacOS/odamex" -d "$app/Contents/libs" -p @executable_path/../libs/
+          codesign --force --deep --sign - "$app"
+
+      - name: Package
+        run: |
+          mkdir -p package freedoom
+          cp -R odamex/build/client/odamex.app package/
+          curl -fsSL -o freedoom.zip "$FREEDOOM"
+          unzip -q -j freedoom.zip '*/freedoom2.wad' '*/COPYING.txt' -d freedoom
+          echo "$FREEDOOM2_SHA256  freedoom/freedoom2.wad" | shasum -a 256 -c
+          cp freedoom/freedoom2.wad package/
+          cp freedoom/COPYING.txt package/FREEDOOM-COPYING.txt
+          cp odamex/LICENSE package/ODAMEX-LICENSE.txt
+          tar -czf "$PACKAGE" -C package .
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Both builds try to create the release; whichever is second finds it there
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "" || true
+          gh release upload "$GITHUB_REF_NAME" "$PACKAGE" --clobber

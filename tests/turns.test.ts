@@ -19,6 +19,7 @@ function stubClaudeCode(on, clock, { isOn = true } = {}) {
   })
   on('ui.toast', () => ({ value: undefined }))
   on('fs.write', () => ({ value: undefined }))
+  on('fs.exists', () => ({ value: true }))
   // The engine runs for longer than any test
   on('process.spawn', async function* () {
     await clock.sleep(60 * 60 * 1000)

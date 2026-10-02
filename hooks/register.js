@@ -11,6 +11,8 @@ const SERVER = '157.245.140.115:10666'
 // long it disconnects, so idle sessions don't hold the server's slots
 const AWAY_DISCONNECT_MS = 5 * 60 * 1000
 
+const RELEASES = 'https://github.com/jarrodwatts/intermission/releases/download'
+
 const NAME_STARTS = ['Idle', 'Bored', 'Queued', 'Pending', 'Async', 'Blocked', 'Lazy']
 const NAME_ENDS = ['Dev', 'Coder', 'Hacker', 'Intern', 'Marine', 'Imp']
 
@@ -39,6 +41,9 @@ let frame = null
 let inputPath = null
 let clientLine = '0'
 let awayTimer = null
+// The engine download in flight, and what the welcome pane says about it
+let download = null
+let downloadStatus = null
 // Kills and deaths in the current or last round, as the engine reports them
 let score = null
 
@@ -57,7 +62,7 @@ async function dropIn($) {
   if (phase !== 'waiting') return
   timer = null
   const surfaces = await $.session.surfaces()
-  if (!surfaces.includes('terminal')) {
+  if (!surfaces.includes('terminal') || !(await $.fs.exists(enginePath($.plugin.root)))) {
     phase = 'idle'
     return
   }
@@ -142,10 +147,50 @@ async function needsYou($) {
   }
 }
 
+function enginePath(root) {
+  return root + '/dist/odamex.app/Contents/MacOS/odamex'
+}
+
+// Each plugin version downloads the engine built for it, once
+function ensureEngine($) {
+  download ??= downloadEngine($).finally(() => {
+    download = null
+  })
+  return download
+}
+
+async function downloadEngine($) {
+  const root = $.plugin.root
+  if (await $.fs.exists(enginePath(root))) return
+  const showStatus = (text) => {
+    downloadStatus = text
+    $.ui.invalidate('ui.render')
+  }
+  try {
+    const [system, arch] = (await $.process.run(['uname', '-sm'])).stdout.trim().split(' ')
+    if (system !== 'Darwin') throw new Error('it runs on macOS for now')
+    const { version } = JSON.parse(await $.fs.read(root + '/.claude-plugin/plugin.json'))
+    const archive = root + '/engine.tar.gz'
+    showStatus('Downloading the game, about 40 MB…')
+    const fetched = await $.process.run(
+      ['curl', '-fsSL', '--retry', '2', '-o', archive, RELEASES + '/v' + version + '/intermission-engine-macos-' + arch + '.tar.gz'],
+      { timeoutMs: 10 * 60 * 1000 },
+    )
+    if (fetched.exitCode !== 0) throw new Error(fetched.stderr.trim() || 'the download failed')
+    await $.process.run(['mkdir', '-p', root + '/dist'])
+    const unpacked = await $.process.run(['tar', '-xzf', archive, '-C', root + '/dist'])
+    await $.process.run(['rm', '-f', archive])
+    if (unpacked.exitCode !== 0) throw new Error(unpacked.stderr.trim() || 'the download was damaged')
+    showStatus('The game is ready.')
+  } catch (error) {
+    showStatus("Couldn't get the game: " + error.message)
+  }
+}
+
 function engineRequest(root, id) {
   return {
     argv: [
-      root + '/dist/odamex.app/Contents/MacOS/odamex',
+      enginePath(root),
       '-iwad', root + '/dist/freedoom2.wad',
       // Its own settings, so a person's own Odamex setup is never touched
       '-config', '/tmp/intermission-' + id + '.cfg',
@@ -259,6 +304,7 @@ export function register(on) {
       isWelcomeOpen = true
       await $.ui.open({ id: PANE, title: 'intermission' })
     }
+    void ensureEngine($)
     return {}
   })
 
@@ -342,6 +388,7 @@ export function register(on) {
               'When Claude has been working for 2 seconds you drop into Doom here, and you get handed back when it is done or needs you.',
             ],
           }),
+          ...(downloadStatus ? [Text({ children: [downloadStatus] })] : []),
           Text({ dimColor: true, children: ['/intermission off turns it off.'] }),
           Button({
             key: 'got-it',

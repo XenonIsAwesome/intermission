@@ -1,6 +1,9 @@
 {
   "name": "intermission",
-  "version": "0.0.1",
-  "description": "Play Doom deathmatch while Claude works",
-  "author": { "name": "Jarrod Watts" }
+  "displayName": "intermission",
+  "version": "0.1.0",
+  "description": "Play Doom deathmatch while Claude works, and get handed back when it's done",
+  "author": { "name": "Jarrod Watts" },
+  "homepage": "https://github.com/jarrodwatts/intermission",
+  "repository": "https://github.com/jarrodwatts/intermission"
 }
