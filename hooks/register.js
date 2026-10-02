@@ -10,6 +10,8 @@ const SERVER = '157.245.140.115:10666'
 // Between drop-ins the engine waits on the server as a spectator; after this
 // long it disconnects, so idle sessions don't hold the server's slots
 const AWAY_DISCONNECT_MS = 5 * 60 * 1000
+// Long enough for a slow connection; some networks never let it through at all
+const CONNECT_TIMEOUT_MS = 10 * 1000
 
 const RELEASES = 'https://github.com/jarrodwatts/intermission/releases/download'
 
@@ -43,6 +45,9 @@ let frame = null
 let inputPath = null
 let clientLine = '0'
 let awayTimer = null
+// Set once the server proved unreachable, so the rest of the session plays a
+// local game against monsters instead
+let isOffline = false
 // The engine download in flight, and what the welcome pane says about it
 let download = null
 let downloadStatus = null
@@ -220,7 +225,7 @@ function engineRequest(root, id) {
       '+vid_fullscreen', '0',
       '+vid_maxfps', '35',
       '+cl_name', name,
-      '+connect', SERVER,
+      ...(isOffline ? ['+map', 'MAP01'] : ['+connect', SERVER]),
     ],
     env: {
       SDL_VIDEODRIVER: 'dummy',
@@ -238,6 +243,9 @@ async function runEngine($) {
   await writeInput($)
   score = { kills: 0, deaths: 0 }
   engine = $.process.spawn(engineRequest($.plugin.root, id))
+  const startedAt = await $.clock.now()
+  let isConnected = isOffline
+  let isUnreachable = false
   let pending = ''
   let failure = null
   try {
@@ -247,6 +255,14 @@ async function runEngine($) {
       const lines = (pending + text).split('\n')
       pending = lines.pop()
       for (const line of lines) {
+        if (line === '@connected') {
+          isConnected = true
+          continue
+        }
+        if (!isConnected && (await $.clock.now()) - startedAt > CONNECT_TIMEOUT_MS) {
+          isUnreachable = true
+          break
+        }
         const sentAway = /^@disconnected (.*)/.exec(line)
         if (sentAway) {
           failure = 'intermission was disconnected' + (sentAway[1] ? ': ' + sentAway[1] : '')
@@ -269,7 +285,7 @@ async function runEngine($) {
         }
       }
       // Leaving the loop is what stops the engine
-      if (failure) break
+      if (failure || isUnreachable) break
     }
   } catch (error) {
     $.ui.log('the game did not start: ' + error, { to: 'debug' })
@@ -278,6 +294,17 @@ async function runEngine($) {
     engine = null
     frame = null
     inputPath = null
+  }
+  if (isUnreachable) {
+    isOffline = true
+    if (phase === 'playing' || phase === 'countdown') {
+      $.ui.toast(
+        "Couldn't reach the game server. Your network may block UDP, as corporate VPNs like Zscaler do, so this is an offline game against monsters.",
+        { timeoutMs: 8000 },
+      )
+      void runEngine($)
+    }
+    return
   }
   // Ending on its own while someone plays means the engine quit, crashed or was
   // sent away; while they're away, the next drop-in simply starts it again.
@@ -438,7 +465,7 @@ export function register(on) {
     }
 
     if (e.surface !== 'terminal') return Text({ children: ['intermission needs the terminal, in Ghostty or kitty.'] })
-    if (!frame) return Text({ children: ['Joining the game as ' + name + '…'] })
+    if (!frame) return Text({ children: [isOffline ? 'Starting an offline game…' : 'Joining the game as ' + name + '…'] })
     // Terminal cells are about twice as tall as they are wide
     const columns = Math.min(255, e.props.bodyColumns)
     const rows = Math.max(1, Math.round((columns * HEIGHT) / WIDTH / 2))

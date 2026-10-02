@@ -18,18 +18,18 @@ index 8ecd952..79af2fc 100644
  # Client target
 diff --git a/client/sdl/i_frameexport.cpp b/client/sdl/i_frameexport.cpp
 new file mode 100644
-index 0000000..24e5960
+index 0000000..2a7986d
 --- /dev/null
 +++ b/client/sdl/i_frameexport.cpp
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,131 @@
 +// Exports each finished frame for the intermission Claude Code mod.
 +//
 +// When INTERMISSION_FRAMES names a shared-memory prefix (such as "/im"), every
 +// frame is written as raw RGB into a fresh POSIX shared-memory object and its
 +// name printed on stdout. The terminal reads the object and unlinks it, so no
-+// pixel passes through the mod. The player's score is printed alongside
-+// whenever it changes, and why, if the server sends this client away. Without
-+// the variable this does nothing.
++// pixel passes through the mod. Alongside go the moment the client reaches
++// the server, the player's score whenever it changes, and why, if the server
++// sends this client away. Without the variable this does nothing.
 +
 +#include "odamex.h"
 +
@@ -41,9 +41,20 @@ index 0000000..24e5960
 +#include <sys/mman.h>
 +#include <unistd.h>
 +
++#include "cl_main.h"
 +#include "d_player.h"
 +#include "i_inputfile.h"
 +#include "i_video.h"
++
++// Once, so the mod can tell a slow connection from one that will never come
++static void reportConnected()
++{
++	static bool isReported = false;
++	if (isReported || !connected)
++		return;
++	isReported = true;
++	printf("@connected\n");
++}
 +
 +// Kills count monsters and players alike
 +static void reportScore()
@@ -138,6 +149,7 @@ index 0000000..24e5960
 +	munmap(out, size);
 +
 +	printf("@frame %s %d %d\n", name, width, height);
++	reportConnected();
 +	reportScore();
 +	fflush(stdout);
 +}
@@ -178,10 +190,10 @@ index ec42dca..d805509 100644
  	event_t ev;
 diff --git a/client/sdl/i_inputfile.cpp b/client/sdl/i_inputfile.cpp
 new file mode 100644
-index 0000000..6bc41b5
+index 0000000..0cf3915
 --- /dev/null
 +++ b/client/sdl/i_inputfile.cpp
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,245 @@
 +// Reads input from the intermission Claude Code mod.
 +//
 +// A terminal reports key presses but never releases, so the mod works out
@@ -196,7 +208,8 @@ index 0000000..6bc41b5
 +// this does nothing.
 +//
 +// Between drop-ins the engine stays connected as a silent spectator, so
-+// dropping back in is instant and nobody is left standing in the open.
++// dropping back in is instant and nobody is left standing in the open. In an
++// offline game, with no server to spectate on, it pauses instead.
 +//
 +// A terminal can't capture the mouse either, but a native process can hold
 +// the cursor itself: each click locks it where it landed, and every tic the
@@ -220,6 +233,7 @@ index 0000000..6bc41b5
 +#include "cl_main.h"
 +#include "d_main.h"
 +#include "d_player.h"
++#include "doomstat.h"
 +
 +EXTERN_CVAR(snd_sfxvolume)
 +EXTERN_CVAR(snd_musicvolume)
@@ -346,18 +360,26 @@ index 0000000..6bc41b5
 +	}
 +}
 +
-+// The server answers a join or spectate a moment later, so keep nudging the
++// A join, spectate or pause takes effect a moment later, so keep nudging the
 +// game towards what the mod wants, once a second, until it gets there
 +static void followPlaying()
 +{
 +	static int ticsUntilAsking = 0;
-+	if (!connected || --ticsUntilAsking > 0)
++	if (--ticsUntilAsking > 0)
 +		return;
-+	const bool isSpectating = consoleplayer().spectator;
-+	if (isPlaying && isSpectating)
-+		AddCommandString("join");
-+	else if (!isPlaying && !isSpectating)
-+		AddCommandString("spectate");
++	if (connected)
++	{
++		const bool isSpectating = consoleplayer().spectator;
++		if (isPlaying && isSpectating)
++			AddCommandString("join");
++		else if (!isPlaying && !isSpectating)
++			AddCommandString("spectate");
++		else
++			return;
++	}
++	// The pause command toggles, so only send it while the state is wrong
++	else if (gamestate == GS_LEVEL && paused == isPlaying)
++		AddCommandString("pause");
 +	else
 +		return;
 +	ticsUntilAsking = TICRATE;

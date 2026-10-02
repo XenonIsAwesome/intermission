@@ -3,8 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 // Answers everything the mod asks of Claude Code, and counts the pane opening
 // and closing, which is what the person sees. isPlaced(n) says whether the nth
 // open gets room on screen, as it may not in a narrow terminal.
-function stubClaudeCode(on, clock, { isOn = true, isPlaced = (n) => true } = {}) {
-  const pane = { opens: 0, closes: 0 }
+function stubClaudeCode(on, clock, { isOn = true, isPlaced = (n) => true, isServerUnreachable = false } = {}) {
+  const pane = { opens: 0, closes: 0, engines: [] }
   on('store.get', ($, e) => ({ value: e.key === 'isOn' ? isOn : 'TestMarine' }))
   on('store.set', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
@@ -23,10 +23,18 @@ function stubClaudeCode(on, clock, { isOn = true, isPlaced = (n) => true } = {})
   on('ui.toast', () => ({ value: undefined }))
   on('fs.write', () => ({ value: undefined }))
   on('fs.exists', () => ({ value: true }))
-  // The engine runs for longer than any test
-  on('process.spawn', async function* () {
+  // The engine runs for longer than any test. The first one, when the server
+  // never answers, draws frames for 11 seconds without reporting connecting.
+  on('process.spawn', async function* ($, e) {
+    pane.engines.push(e.argv)
+    if (isServerUnreachable && pane.engines.length === 1) {
+      yield { stream: 'stdout', text: '@frame /imtest-0 640 360\n' }
+      await clock.sleep(11 * 1000)
+      yield { stream: 'stdout', text: '@frame /imtest-1 640 360\n' }
+    }
     await clock.sleep(60 * 60 * 1000)
   })
+  on('ui.blit', () => ({ value: {} }))
   on('ui.log', () => ({ value: undefined }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
@@ -196,4 +204,20 @@ test('withdraws the offer when Claude finishes first', async ($, on) => {
   await finishTurn($)
   const withdrawn = await $.ui.mount(BAND)
   expect(await withdrawn.find({ key: 'play' })).toBeUndefined()
+})
+
+test('plays offline when the server never answers', async ($, on) => {
+  const clock = mock.clock(on)
+  const pane = stubClaudeCode(on, clock, { isServerUnreachable: true })
+  await startSession($)
+
+  await $.turn.start({ turnId: 't1', text: 'refactor auth' })
+  await clock.advance(2000)
+  expect(pane.engines.length).toBe(1)
+  expect(pane.engines[0]).toContain('+connect')
+  await clock.advance(12000)
+  // The pane stays open while a local game takes over
+  expect(pane.engines.length).toBe(2)
+  expect(pane.engines[1]).toContain('+map')
+  expect(pane.closes).toBe(0)
 })
