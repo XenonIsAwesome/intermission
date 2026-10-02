@@ -37,24 +37,29 @@ To turn it off again, run `/intermission off`.
 ## Requirements
 
 - macOS 15 or later, on Apple silicon or Intel, or Linux on x86_64 or arm64
-  (on Linux, turn with the arrow keys: the mouse can't be locked yet)
+  (on Linux the mouse turns under X11; under Wayland it needs your user in the
+  `input` group, and the arrow keys turn either way)
 - [Ghostty](https://ghostty.org) or [kitty](https://sw.kovidgoyal.net/kitty/),
   the terminals that can show the game's pixels
 - Claude Code 2.1.287 or later
 
 ## Controls
 
-Click the game to play. On macOS the click also locks the mouse for turning;
-Esc or ⌘ releases it.
+Click the game to play. The click also locks the mouse for turning; Esc or ⌘
+(Super on Linux) releases it. On Linux under Wayland the cursor can't be held,
+so it stays visible and free while the game reads its movement.
 
 | | |
 | :- | :- |
 | Move | WASD or the arrow keys |
-| Turn | the mouse, once locked (macOS), or the left and right arrows |
+| Turn | the mouse, once locked, or the left and right arrows |
 | Fire | left click |
 | Run forward | hold right click |
 | Open doors | space |
 | Weapons | 1 to 7 |
+
+To turn faster or slower, with the mouse and the arrow keys alike, run
+`/intermission sensitivity 1.5`. 1 is the default; it takes 0.05 to 10.
 
 If your terminal is too narrow for the pane to open by itself, a line above the
 prompt offers it instead: press 1.

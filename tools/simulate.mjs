@@ -11,13 +11,15 @@
 //                                           silent when the pane closes
 //   --root <dir>   where dist/ holds the engine (default: the installed plugin,
 //                  else this repo)
+//   --sensitivity <n>  turning speed, as /intermission sensitivity <n> sets it
 //   --jitter       delay file writes by a random few ms, like a busy host
 //
 // Control keys:  1  Claude starts working      2  Claude finishes
 //                3  Claude asks permission     4  you answer, Claude carries on
 //                5  you close the pane         Ctrl+C  quit
 // Game keys (through the real hooks/input.js, so held keys behave as they do
-// in Claude Code):  WASD or arrows move, space opens, j fires, k runs
+// in Claude Code):  WASD or arrows move, space opens, j fires, k runs.
+// A click also locks the real mouse for turning, as in Claude Code.
 
 import cp from 'node:child_process'
 import fs from 'node:fs'
@@ -235,6 +237,8 @@ fs.copyFileSync(repo + '/hooks/register.js', copy)
 const { register } = await import(pathToFileURL(copy).href)
 register(on)
 await emit('session.start', {})
+const sensArg = args.indexOf('--sensitivity')
+if (sensArg >= 0) console.log((await emit('command.run', { command: 'intermission', args: 'sensitivity ' + args[sensArg + 1] }, {})).text ?? '')
 await emit('command.run', { command: 'intermission', args: '' })
 // The welcome pane belongs to /intermission; the first turn replaces it
 const readInput = () => (state.inputPath && fs.existsSync(state.inputPath) ? fs.readFileSync(state.inputPath, 'utf8').trim() : '-')

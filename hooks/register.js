@@ -22,6 +22,8 @@ const NAME_ENDS = ['Dev', 'Coder', 'Hacker', 'Intern', 'Marine', 'Imp']
 // kept between sessions in $.store
 let isOn = false
 let name = null
+// How fast the mouse and the arrow keys turn, 1 being the default
+let sensitivity = 1
 // The engine build this machine runs, from uname: { system, arch }
 let target = null
 
@@ -48,6 +50,8 @@ let inputPath = null
 let writing = Promise.resolve()
 let clientLine = '0'
 let awayTimer = null
+// Set once the engine said why the mouse can't turn, so it's said just once
+let isMouseExplained = false
 // Set once the server proved unreachable, so the rest of the session plays a
 // local game against monsters instead
 let isOffline = false
@@ -256,6 +260,7 @@ function engineRequest(root, id) {
       // A per-run name keeps two sessions' frames from colliding
       INTERMISSION_FRAMES: '/im' + id + '-',
       INTERMISSION_INPUT: inputPath,
+      INTERMISSION_SENSITIVITY: String(sensitivity),
     },
   }
 }
@@ -290,6 +295,14 @@ async function runEngine($) {
         if (sentAway) {
           failure = 'intermission was disconnected' + (sentAway[1] ? ': ' + sentAway[1] : '')
           break
+        }
+        const noMouse = /^@mouse (.*)/.exec(line)
+        if (noMouse) {
+          if (!isMouseExplained) {
+            isMouseExplained = true
+            $.ui.toast("The mouse can't turn: " + noMouse[1] + '. The arrow keys still do.', { timeoutMs: 8000 })
+          }
+          continue
         }
         const scored = /^@score (\d+) (\d+)/.exec(line)
         if (scored) {
@@ -342,10 +355,14 @@ async function runEngine($) {
   }
 }
 
-// The engine can only hold the cursor for mouse-look on macOS; on Linux turn
-// with the arrow keys
+// The mouse turns on macOS and on Linux, under X11 and, where the person may
+// read the mouse's events, Wayland
 function canLockMouse() {
-  return target?.system === 'Darwin'
+  return target?.system === 'Darwin' || target?.system === 'Linux'
+}
+
+function releaseKeys() {
+  return target?.system === 'Darwin' ? 'Esc or ⌘' : 'Esc or Super'
 }
 
 function shmSource(name) {
@@ -356,6 +373,7 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     isOn = (await $.store.get('isOn')) === true
     name = await $.store.get('name')
+    sensitivity = (await $.store.get('sensitivity')) ?? 1
     await detectTarget($)
     if (!name) {
       name = randomName()
@@ -364,12 +382,24 @@ export function register(on) {
     await $.command.register({
       name: 'intermission',
       description: 'Play Doom while Claude works',
-      argumentHint: '[off]',
+      argumentHint: '[off | sensitivity <number>]',
     })
     return next(e)
   })
 
   on('command.run', { command: 'intermission' }, async ($, e) => {
+    const sensed = /^sensitivity(?:\s+(\S+))?$/.exec(e.args.trim())
+    if (sensed) {
+      if (sensed[1] === undefined) return { text: 'sensitivity is ' + sensitivity + '. /intermission sensitivity <number> changes it; 1 is the default.' }
+      const value = Number(sensed[1])
+      if (!(value >= 0.05 && value <= 10)) return { text: 'sensitivity is a number from 0.05 to 10.' }
+      sensitivity = value
+      await $.store.set('sensitivity', value)
+      // The engine reads it as it starts, so the next drop-in starts it afresh
+      if (phase !== 'idle') await pullOut($)
+      await stopEngine($)
+      return { text: 'sensitivity is now ' + value + '.' }
+    }
     if (e.args.trim() === 'off') {
       isOn = false
       await $.store.set('isOn', false)
@@ -506,7 +536,7 @@ export function register(on) {
         ? Text({ bold: true, children: ["Claude's done · back in " + countdown] })
         : Text({
             dimColor: true,
-            children: ['Click the game to play' + (canLockMouse() ? ' and lock the mouse · Esc or ⌘ releases it' : '') + ' · WASD or arrows · left click fires · right click runs · space opens'],
+            children: ['Click the game to play' + (canLockMouse() ? ' and lock the mouse · ' + releaseKeys() + ' releases it' : '') + ' · WASD or arrows · left click fires · right click runs · space opens'],
           })
     return Box({
       flexDirection: 'column',
