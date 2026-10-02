@@ -208,6 +208,8 @@ jobs:
             cp -L "$lib" package/libs/
           done
           cp -L "$bin" package/odamex
+          # Odamex's own resources, which it looks for beside the binary
+          cp odamex/build/wad/odamex.wad package/odamex.wad
           patchelf --set-rpath '$ORIGIN/libs' package/odamex
           for lib in package/libs/*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
 
