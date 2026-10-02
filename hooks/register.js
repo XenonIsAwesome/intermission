@@ -36,7 +36,7 @@ function engineRequest(root, id) {
 async function runEngine($) {
   const id = Math.random().toString(36).slice(2, 6)
   inputPath = '/tmp/intermission-' + id + '.input'
-  await $.fs.write(inputPath, '0\n')
+  await $.fs.write(inputPath, '0 0\n')
   engine = $.process.spawn(engineRequest($.plugin.root, id))
   let pending = ''
   try {
