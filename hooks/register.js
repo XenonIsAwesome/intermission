@@ -13,7 +13,7 @@ const AWAY_DISCONNECT_MS = 5 * 60 * 1000
 // Long enough for a slow connection; some networks never let it through at all
 const CONNECT_TIMEOUT_MS = 10 * 1000
 
-const RELEASES = 'https://github.com/jarrodwatts/intermission/releases/download'
+const RELEASES = 'https://github.com/XenonIsAwesome/intermission/releases/download'
 
 const NAME_STARTS = ['Idle', 'Bored', 'Queued', 'Pending', 'Async', 'Blocked', 'Lazy']
 const NAME_ENDS = ['Dev', 'Coder', 'Hacker', 'Intern', 'Marine', 'Imp']
