@@ -5,7 +5,7 @@
   "description": "Play Doom deathmatch while Claude works, and get handed back when it's done",
   "author": { "name": "Jarrod Watts", "url": "https://github.com/jarrodwatts" },
   "homepage": "https://github.com/jarrodwatts/intermission",
-  "repository": "https://github.com/jarrodwatts/intermission",
+  "repository": "https://github.com/XenonIsAwesome/intermission",
   "license": "MIT",
   "keywords": ["doom", "game", "multiplayer", "deathmatch", "mod", "odamex", "freedoom"]
 }
