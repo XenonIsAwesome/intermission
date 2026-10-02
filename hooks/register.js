@@ -36,7 +36,7 @@ function engineRequest(root, id) {
 async function runEngine($) {
   const id = Math.random().toString(36).slice(2, 6)
   inputPath = '/tmp/intermission-' + id + '.input'
-  await $.fs.write(inputPath, '0 0\n')
+  await $.fs.write(inputPath, '0\n')
   engine = $.process.spawn(engineRequest($.plugin.root, id))
   let pending = ''
   try {
@@ -112,7 +112,7 @@ export function register(on) {
         }),
         Text({
           dimColor: true,
-          children: ['Click the game to play · WASD or arrows · mouse left/right to turn · left click fires · right click runs · space opens · Esc stops'],
+          children: ['Click the game to play and lock the mouse · Esc or ⌘ releases it · WASD or arrows · left click fires · right click runs · space opens'],
         }),
       ],
     })

@@ -1,3 +1,21 @@
+diff --git a/client/CMakeLists.txt b/client/CMakeLists.txt
+index 8ecd952..79af2fc 100644
+--- a/client/CMakeLists.txt
++++ b/client/CMakeLists.txt
+@@ -126,8 +126,12 @@ if(APPLE)
+   find_library(CARBON_LIBRARY Carbon)
+   find_library(AUDIOTBOX_LIBRARY AudioToolbox)
+   find_library(AUDIOUNIT_LIBRARY AudioUnit)
++  # ApplicationServices for the intermission mouse lock; FLTK needs
++  # ScreenCaptureKit on current SDKs
++  find_library(APPLICATIONSERVICES_LIBRARY ApplicationServices)
++  find_library(SCREENCAPTUREKIT_LIBRARY ScreenCaptureKit)
+   set(APPLE_FRAMEWORKS ${APPKIT_LIBRARY} ${CARBON_LIBRARY} ${AUDIOTBOX_LIBRARY}
+-    ${AUDIOUNIT_LIBRARY})
++    ${AUDIOUNIT_LIBRARY} ${APPLICATIONSERVICES_LIBRARY} ${SCREENCAPTUREKIT_LIBRARY})
+ endif()
+ 
+ # Client target
 diff --git a/client/sdl/i_frameexport.cpp b/client/sdl/i_frameexport.cpp
 new file mode 100644
 index 0000000..0afe09c
@@ -124,23 +142,27 @@ index ec42dca..d805509 100644
  	event_t ev;
 diff --git a/client/sdl/i_inputfile.cpp b/client/sdl/i_inputfile.cpp
 new file mode 100644
-index 0000000..c3d4eee
+index 0000000..289035c
 --- /dev/null
 +++ b/client/sdl/i_inputfile.cpp
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,142 @@
 +// Reads input from the intermission Claude Code mod.
 +//
 +// A terminal reports key presses but never releases, so the mod works out
 +// which keys count as held and writes that state, not a stream of events, to
 +// the file INTERMISSION_INPUT names. The file holds one line:
 +//
-+//   <writer> <mouse> <key> <key> ...
++//   <clicks> <key> <key> ...
 +//
-+// where writer identifies who keeps the file, mouse is the running total of
-+// horizontal mouse motion, and each key is an Odamex key code held right now.
-+// Each tic the changes are posted as Doom events. A total rather than a
-+// per-tic amount means a write landing between tics is never applied twice or
-+// lost. Without the variable this does nothing.
++// where clicks counts the clicks on the game so far and each key is an Odamex
++// key code held right now. Each tic the changes are posted as Doom events.
++// Without the variable this does nothing.
++//
++// A terminal can't capture the mouse either, but a native process can hold
++// the cursor itself: each click locks it where it landed, and every tic the
++// distance it travelled becomes mouse motion before it is put back. That needs
++// no window and no permission. Esc or Command releases it, so leaving the game
++// or switching apps never drags a locked cursor along.
 +
 +#include "odamex.h"
 +
@@ -158,14 +180,78 @@ index 0000000..c3d4eee
 +	D_PostEvent(&ev);
 +}
 +
++#ifdef __APPLE__
++
++#include <ApplicationServices/ApplicationServices.h>
++#include <cmath>
++
++static const double MOUSE_PER_PIXEL = 3.0;
++static const CGKeyCode KEY_ESCAPE = 53;
++
++static bool isLocked = false;
++static CGPoint lockedAt;
++
++static CGPoint cursorPosition()
++{
++	CGEventRef event = CGEventCreate(NULL);
++	const CGPoint point = CGEventGetLocation(event);
++	CFRelease(event);
++	return point;
++}
++
++static void lockMouse()
++{
++	static bool isWarpDelayOff = false;
++	if (!isWarpDelayOff)
++	{
++		// After a warp macOS ignores the mouse for a moment unless told not to
++		CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
++		CGEventSourceSetLocalEventsSuppressionInterval(source, 0.0);
++		CFRelease(source);
++		isWarpDelayOff = true;
++	}
++	// A warp to a fractional point lands on a whole one, which would read as motion
++	const CGPoint point = cursorPosition();
++	lockedAt = CGPointMake(round(point.x), round(point.y));
++	isLocked = true;
++}
++
++static void postLockedMotion()
++{
++	if (!isLocked)
++		return;
++	const CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
++	if (CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, KEY_ESCAPE) ||
++		(flags & kCGEventFlagMaskCommand))
++	{
++		isLocked = false;
++		return;
++	}
++	const CGPoint point = cursorPosition();
++	if (point.x == lockedAt.x && point.y == lockedAt.y)
++		return;
++	CGWarpMouseCursorPosition(lockedAt);
++	const int motion = (int)lround((point.x - lockedAt.x) * MOUSE_PER_PIXEL);
++	if (motion)
++		postEvent(event_t(ev_mouse, 0, motion, 0));
++}
++
++#else
++
++static void lockMouse() {}
++static void postLockedMotion() {}
++
++#endif
++
 +void I_ReadInputFile()
 +{
 +	static const char* path = getenv("INTERMISSION_INPUT");
 +	static std::set<int> held;
-+	static long writer = 0;
-+	static long mouse = 0;
++	static long clicks = 0;
 +	if (!path)
 +		return;
++
++	postLockedMotion();
 +
 +	char line[1024];
 +	FILE* file = fopen(path, "r");
@@ -179,8 +265,7 @@ index 0000000..c3d4eee
 +		return;
 +
 +	char* cursor = line;
-+	const long nextWriter = strtol(cursor, &cursor, 10);
-+	const long nextMouse = strtol(cursor, &cursor, 10);
++	const long nextClicks = strtol(cursor, &cursor, 10);
 +	std::set<int> next;
 +	for (char* end; ; cursor = end)
 +	{
@@ -190,11 +275,10 @@ index 0000000..c3d4eee
 +		next.insert((int)key);
 +	}
 +
-+	// A new writer starts its total from zero, which is no motion
-+	if (nextWriter == writer && nextMouse != mouse)
-+		postEvent(event_t(ev_mouse, 0, (int)(nextMouse - mouse), 0));
-+	writer = nextWriter;
-+	mouse = nextMouse;
++	// A new input region counts from zero again, so any change is a new click
++	if (nextClicks != clicks && nextClicks > 0)
++		lockMouse();
++	clicks = nextClicks;
 +
 +	for (const int key : held)
 +		if (!next.count(key))
