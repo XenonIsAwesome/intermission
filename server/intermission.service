@@ -1,0 +1,15 @@
+[Unit]
+Description=intermission Doom server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=odamex
+WorkingDirectory=/opt/intermission
+Environment=HOME=/opt/intermission
+ExecStart=/opt/intermission/odasrv -iwad /opt/intermission/freedoom2.wad -port 10666 +exec /opt/intermission/intermission.cfg
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
