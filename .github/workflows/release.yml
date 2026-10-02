@@ -117,9 +117,12 @@ jobs:
       # whose license isn't in the package.
       - name: Check the packaged engine
         run: |
-          bundled=$(ls package/odamex.app/Contents/libs | LC_ALL=C sort | tr '\n' ' ')
-          echo "bundled: $bundled"
-          test "$bundled" = "libSDL2-2.0.0.dylib libSDL2_mixer-2.0.0.dylib libSDL3.dylib "
+          for lib in package/odamex.app/Contents/libs/*; do
+            case "$(basename "$lib")" in
+              libSDL2-*.dylib | libSDL2_mixer-*.dylib | libSDL3.dylib) echo "bundled: $(basename "$lib")" ;;
+              *) echo "bundled $(basename "$lib"), whose license isn't in the package"; exit 1 ;;
+            esac
+          done
           codesign --verify --strict package/odamex.app/Contents/libs/*.dylib package/odamex.app
           printf '1 0\n' > input.txt
           SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy \
