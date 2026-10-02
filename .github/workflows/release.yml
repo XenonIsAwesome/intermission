@@ -255,6 +255,7 @@ jobs:
             -iwad package/freedoom2.wad -config "$PWD/check.cfg" -width 320 -height 200 +map MAP01 \
             > frames.log 2>&1 || true
           frames=$(grep -c '^@frame' frames.log || true)
+          tail -n 40 frames.log
           echo "drew $frames frames"
           test "$frames" -gt 10
 
