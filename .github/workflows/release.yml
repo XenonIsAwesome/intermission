@@ -26,7 +26,7 @@ jobs:
       FREEDOOM2_SHA256: a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b
       PACKAGE: intermission-engine-macos-${{ matrix.arch }}.tar.gz
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check the tag matches plugin.json
         run: test "v$(jq -r .version .claude-plugin/plugin.json)" = "$GITHUB_REF_NAME"

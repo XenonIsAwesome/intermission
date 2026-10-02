@@ -1,8 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 // Answers everything the mod asks of Claude Code, and counts the pane opening
-// and closing, which is what the person sees
-function stubClaudeCode(on, clock, { isOn = true } = {}) {
+// and closing, which is what the person sees. isPlaced(n) says whether the nth
+// open gets room on screen, as it may not in a narrow terminal.
+function stubClaudeCode(on, clock, { isOn = true, isPlaced = (n) => true } = {}) {
   const pane = { opens: 0, closes: 0 }
   on('store.get', ($, e) => ({ value: e.key === 'isOn' ? isOn : 'TestMarine' }))
   on('store.set', () => ({ value: undefined }))
@@ -11,8 +12,10 @@ function stubClaudeCode(on, clock, { isOn = true } = {}) {
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('ui.open', () => {
     pane.opens += 1
-    return { value: { isPlaced: true } }
+    return { value: isPlaced(pane.opens) ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } }
   })
+  // What Claude Code itself draws in the band, under anything the mod adds
+  on('ui.render', () => ({ type: 'Text', props: {}, children: [''] }))
   on('ui.close', () => {
     pane.closes += 1
     return { value: undefined }
@@ -152,4 +155,45 @@ test('a permission prompt during the countdown hands back at once', async ($, on
   // The countdown's own close never comes on top
   await clock.advance(5000)
   expect(pane.closes).toBe(1)
+})
+
+const BAND = {
+  plugin: 'intermission',
+  component: 'AbovePrompt',
+  requestId: 'band',
+  surface: 'terminal',
+  viewport: { columns: 100, rows: 30 },
+  props: { hasSurvey: false, isWorking: true, maxRows: 4, bodyColumns: 100, scroll: { offset: 0, bodyRows: 4 }, view: {} },
+} as const
+
+test('offers a key in a narrow terminal, and pressing it drops in', async ($, on) => {
+  const clock = mock.clock(on)
+  // The pane can't open by itself, but opens when the person asks
+  const pane = stubClaudeCode(on, clock, { isPlaced: (n) => n > 1 })
+  await startSession($)
+
+  await $.turn.start({ turnId: 't1', text: 'refactor auth' })
+  await clock.advance(2000)
+  const band = await $.ui.mount(BAND)
+  await band.press({ key: 'play' })
+  expect(pane.opens).toBe(2)
+  // Claude finishing now counts down like any other round
+  await finishTurn($)
+  await clock.advance(3000)
+  expect(pane.closes).toBe(2)
+})
+
+test('withdraws the offer when Claude finishes first', async ($, on) => {
+  const clock = mock.clock(on)
+  stubClaudeCode(on, clock, { isPlaced: () => false })
+  await startSession($)
+
+  await $.turn.start({ turnId: 't1', text: 'refactor auth' })
+  await clock.advance(2000)
+  const offered = await $.ui.mount(BAND)
+  expect(await offered.find({ key: 'play' })).toBeDefined()
+  await offered.unmount()
+  await finishTurn($)
+  const withdrawn = await $.ui.mount(BAND)
+  expect(await withdrawn.find({ key: 'play' })).toBeUndefined()
 })

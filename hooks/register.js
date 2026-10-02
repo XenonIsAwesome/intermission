@@ -24,6 +24,8 @@ let name = null
 // Where play stands:
 //   idle      not playing, whether or not Claude is working
 //   waiting   Claude is working; dropping in once the delay passes
+//   offered   the terminal was too narrow for the pane to open by itself, so
+//             the band above the prompt offers a key that opens it
 //   playing   the pane is open and the engine runs
 //   countdown Claude is done; closing when the count reaches zero
 let phase = 'idle'
@@ -66,19 +68,39 @@ async function dropIn($) {
     phase = 'idle'
     return
   }
-  const { isPlaced } = await $.ui.open({ id: PANE, title: 'intermission', focus: true })
-  if (!isPlaced) {
-    // A waiting pane would pop up later, long after the moment has passed
-    phase = 'idle'
+  const opened = await $.ui.open({ id: PANE, title: 'intermission', focus: true })
+  if (!opened.isPlaced) {
+    // A waiting pane would pop up later, long after the moment has passed.
+    // One the person opens appears at any width, so offer them a key instead.
+    $.ui.log('the pane waits for a wider terminal: ' + opened.reason, { to: 'debug' })
     await $.ui.close({ id: PANE })
-    $.ui.toast('Widen the terminal to play intermission while Claude works')
+    phase = 'offered'
+    $.ui.invalidate('ui.render')
     return
   }
+  await startPlaying($)
+}
+
+async function acceptOffer($) {
+  if (phase !== 'offered') return
+  const { isPlaced } = await $.ui.open({ id: PANE, title: 'intermission', focus: true })
+  if (isPlaced) await startPlaying($)
+}
+
+async function startPlaying($) {
   phase = 'playing'
+  $.ui.invalidate('ui.render')
   awayTimer?.cancel()
   awayTimer = null
   if (engine) await writeInput($)
   else void runEngine($)
+}
+
+// Claude is done or needs the person before they took up an offer to play
+function withdrawOffer($) {
+  cancelTimer()
+  phase = 'idle'
+  $.ui.invalidate('ui.render')
 }
 
 // why, when given, heads the toast that sums up the round
@@ -139,9 +161,8 @@ function randomName() {
 
 // Claude is about to ask the person something, so they must see the prompt
 async function needsYou($) {
-  if (phase === 'waiting') {
-    cancelTimer()
-    phase = 'idle'
+  if (phase === 'waiting' || phase === 'offered') {
+    withdrawOffer($)
   } else if (phase !== 'idle') {
     await pullOut($, 'Claude needs you')
   }
@@ -328,9 +349,8 @@ export function register(on) {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) return next(e)
     isTurnRunning = false
-    if (phase === 'waiting') {
-      cancelTimer()
-      phase = 'idle'
+    if (phase === 'waiting' || phase === 'offered') {
+      withdrawOffer($)
     } else if (phase === 'playing') {
       if (e.isAborted) await pullOut($)
       else startCountdown($)
@@ -366,6 +386,20 @@ export function register(on) {
     clientLine = e.data.line
     await writeInput($)
     return {}
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (phase !== 'offered') return next(e)
+    const { Box, Button } = $.ui.resolve(e)
+    // Keep whatever other mods show in the band
+    const others = await next(e)
+    return Box({
+      flexDirection: 'column',
+      children: [
+        Button({ key: 'play', label: 'Play Doom while Claude works', hotkey: '1', plain: true, onPress: () => acceptOffer($) }),
+        ...(others ? [others] : []),
+      ],
+    })
   })
 
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
