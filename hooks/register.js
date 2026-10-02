@@ -45,6 +45,7 @@ let countdown = 0
 let engine = null
 let frame = null
 let inputPath = null
+let writing = Promise.resolve()
 let clientLine = '0'
 let awayTimer = null
 // Set once the server proved unreachable, so the rest of the session plays a
@@ -137,9 +138,15 @@ function startCountdown($) {
 
 // The engine plays or spectates by the first number, and takes keys only in play
 async function writeInput($) {
-  if (!inputPath) return
-  const isPlaying = phase === 'playing' || phase === 'countdown'
-  await $.fs.write(inputPath, isPlaying ? '1 ' + clientLine + '\n' : '0 0\n')
+  // One write at a time, each working out what to say as it runs, so a slow
+  // earlier write can't land last and leave the engine playing after the pane
+  // closed
+  writing = writing.then(async () => {
+    if (!inputPath) return
+    const isPlaying = phase === 'playing' || phase === 'countdown'
+    await $.fs.write(inputPath, isPlaying ? '1 ' + clientLine + '\n' : '0 0\n')
+  })
+  await writing.catch(() => {})
 }
 
 // The pane closed, whoever closed it: spectate until the next drop-in
