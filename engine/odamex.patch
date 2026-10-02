@@ -142,10 +142,10 @@ index ec42dca..d805509 100644
  	event_t ev;
 diff --git a/client/sdl/i_inputfile.cpp b/client/sdl/i_inputfile.cpp
 new file mode 100644
-index 0000000..ec551e7
+index 0000000..b6b49fe
 --- /dev/null
 +++ b/client/sdl/i_inputfile.cpp
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,168 @@
 +// Reads input from the intermission Claude Code mod.
 +//
 +// A terminal reports key presses but never releases, so the mod works out
@@ -173,6 +173,7 @@ index 0000000..ec551e7
 +#include <cstdlib>
 +#include <cstring>
 +#include <set>
++#include <unistd.h>
 +
 +#include "d_main.h"
 +
@@ -264,10 +265,17 @@ index 0000000..ec551e7
 +void I_ReadInputFile()
 +{
 +	static const char* path = getenv("INTERMISSION_INPUT");
++	static const pid_t claudeCode = getppid();
 +	static std::set<int> held;
 +	static long clicks = 0;
 +	if (!path)
 +		return;
++
++	// Claude Code stops the engine when it closes the pane, but not if it dies
++	// first, say with its terminal tab; then this process is handed to another
++	// parent and should quit rather than play on unseen.
++	if (getppid() != claudeCode || getppid() == 1)
++		exit(0);
 +
 +	postLockedMotion();
 +
