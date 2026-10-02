@@ -65,4 +65,5 @@ droplet.
 
 ## Licenses
 
-Odamex is GPL-2.0, and so are the changes in `engine/`. Freedoom is BSD-3-Clause.
+The mod is MIT, as in [`LICENSE`](LICENSE). Odamex is GPL-2.0, and so are the
+changes to it in `engine/`. Freedoom is BSD-3-Clause.
