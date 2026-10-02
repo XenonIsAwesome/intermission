@@ -47,11 +47,18 @@ jobs:
             -DBUILD_CLIENT=1 -DBUILD_SERVER=0 -DBUILD_LAUNCHER=0 -DBUILD_TESTS=0 -DODAMEX_NO_GITVER=1
           cmake --build odamex/build -j3
 
-      # Copies the Homebrew libraries into the app, so players need no Homebrew
+      # Copies the Homebrew libraries into the app, so players need no Homebrew.
+      # Homebrew's SDL2 is sdl2-compat, which loads SDL3 at startup rather than
+      # linking it, so the bundler can't see it: put SDL3 where sdl2-compat
+      # looks first, beside itself. Without it, SDL2 waits on an error dialog
+      # nobody can see.
       - name: Bundle libraries
         run: |
           app=odamex/build/client/odamex.app
           dylibbundler -od -b -x "$app/Contents/MacOS/odamex" -d "$app/Contents/libs" -p @executable_path/../libs/
+          cp "$(brew --prefix sdl3)/lib/libSDL3.0.dylib" "$app/Contents/libs/libSDL3.dylib"
+          chmod u+w "$app/Contents/libs/libSDL3.dylib"
+          install_name_tool -id @loader_path/libSDL3.dylib "$app/Contents/libs/libSDL3.dylib"
           codesign --force --deep --sign - "$app"
 
       - name: Package
@@ -64,7 +71,22 @@ jobs:
           cp freedoom/freedoom2.wad package/
           cp freedoom/COPYING.txt package/FREEDOOM-COPYING.txt
           cp odamex/LICENSE package/ODAMEX-LICENSE.txt
-          tar -czf "$PACKAGE" -C package .
+
+      # A packaged engine that never draws a frame would ship looking fine
+      - name: Check the packaged engine draws frames
+        run: |
+          printf '1 0\n' > input.txt
+          SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy \
+            INTERMISSION_FRAMES=/imci- INTERMISSION_INPUT="$PWD/input.txt" \
+            perl -e 'alarm 10; exec @ARGV' package/odamex.app/Contents/MacOS/odamex \
+            -iwad package/freedoom2.wad -config "$PWD/check.cfg" -width 320 -height 200 +map MAP01 \
+            > frames.log 2>&1 || true
+          frames=$(grep -c '^@frame' frames.log || true)
+          echo "drew $frames frames"
+          test "$frames" -gt 10
+
+      - name: Archive
+        run: tar -czf "$PACKAGE" -C package .
 
       - name: Attach to the release
         env:
