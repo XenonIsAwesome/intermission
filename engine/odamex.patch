@@ -528,10 +528,10 @@ index 000000000..d6113f910
 +bool I_IsPlaying();
 diff --git a/client/sdl/i_linuxmouse.cpp b/client/sdl/i_linuxmouse.cpp
 new file mode 100644
-index 000000000..d86cb1866
+index 000000000..1e99c5c45
 --- /dev/null
 +++ b/client/sdl/i_linuxmouse.cpp
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,338 @@
 +// Mouse capture for the intermission Claude Code mod on Linux.
 +//
 +// A terminal can't capture the mouse and this process has no window, so it
@@ -546,6 +546,9 @@ index 000000000..d86cb1866
 +//
 +// Neither X11 nor its extensions are linked: they are loaded when first needed,
 +// so a machine without them still runs the game.
++
++// The build compiles every file here, on every platform
++#ifdef __linux__
 +
 +#include "i_linuxmouse.h"
 +
@@ -865,6 +868,8 @@ index 000000000..d86cb1866
 +}
 +
 +} // namespace LinuxMouse
++
++#endif // __linux__
 diff --git a/client/sdl/i_linuxmouse.h b/client/sdl/i_linuxmouse.h
 new file mode 100644
 index 000000000..530d3f206
