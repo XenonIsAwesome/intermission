@@ -19,7 +19,8 @@
 //                5  you close the pane         Ctrl+C  quit
 // Game keys (through the real hooks/input.js, so held keys behave as they do
 // in Claude Code):  WASD or arrows move, space opens, j fires, k runs.
-// A click also locks the real mouse for turning, as in Claude Code.
+// Click the game with the mouse, as in Claude Code: that locks the real mouse
+// for turning (Esc or Super gives it back).
 
 import cp from 'node:child_process'
 import fs from 'node:fs'
@@ -246,7 +247,7 @@ const readInput = () => (state.inputPath && fs.existsSync(state.inputPath) ? fs.
 function shutdown(code = 0) {
   state.engine?.kill('SIGTERM')
   for (const t of timers) clearTimeout(t)
-  if (process.stdout.isTTY && !isAuto) process.stdout.write('\x1b_Ga=d,d=A,q=2\x1b\\\x1b[2J\x1b[H')
+  if (process.stdout.isTTY && !isAuto) process.stdout.write('\x1b[?1000l\x1b[?1006l\x1b_Ga=d,d=A,q=2\x1b\\\x1b[2J\x1b[H')
   process.exit(code)
 }
 
@@ -291,8 +292,17 @@ if (!isAuto) {
   }
   process.stdin.setRawMode(true)
   process.stdin.resume()
+  // Ask the terminal for clicks, as Claude Code does
+  process.stdout.write('\x1b[?1000h\x1b[?1006h')
   process.stdin.on('data', async (key) => {
     const k = key.toString()
+    // Terminal mouse reports: ESC [ < button ; column ; row, M for down, m for up
+    const mouse = /^\x1b\[<(\d+);\d+;\d+([Mm])$/.exec(k)
+    if (mouse) {
+      const button = { 0: 'left', 2: 'right' }[Number(mouse[1]) & 3]
+      if (button && state.paneOpen && Number(mouse[1]) < 32) surface.pointerHandler({ type: mouse[2] === 'M' ? 'down' : 'up', button })
+      return
+    }
     if (k === '\x03') shutdown()
     if (k === '1') await claude.start()
     if (k === '2') await claude.finish()
@@ -307,7 +317,7 @@ if (!isAuto) {
       `Claude: ${state.turnRunning ? 'WORKING' : 'idle'}   pane: ${state.paneOpen ? 'open' : 'closed'}   input file: "${readInput()}"`,
       ...state.texts.map((t) => '  ' + t.slice(0, (process.stdout.columns || 80) - 4)),
       state.toast ? 'toast: ' + state.toast : '',
-      '[1] start working  [2] finish  [3] permission ask  [4] answer  [5] close pane  [Ctrl+C] quit   game: WASD/arrows, space, j fire, k run',
+      '[1] start working  [2] finish  [3] permission ask  [4] answer  [5] close pane  [Ctrl+C] quit   game: WASD/arrows, space, click to lock mouse (j/k also fire/run)',
     ]
     process.stdout.write('\x1b7' + lines.map((l, i) => `\x1b[${rows - lines.length + 1 + i};1H\x1b[2K${l}`).join('') + '\x1b8')
   }, 200)

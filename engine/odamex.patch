@@ -190,10 +190,10 @@ index ec42dcae5..d8055099b 100644
  	event_t ev;
 diff --git a/client/sdl/i_inputfile.cpp b/client/sdl/i_inputfile.cpp
 new file mode 100644
-index 000000000..ce8e9b6f1
+index 000000000..e3dd9c309
 --- /dev/null
 +++ b/client/sdl/i_inputfile.cpp
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,320 @@
 +// Reads input from the intermission Claude Code mod.
 +//
 +// A terminal reports key presses but never releases, so the mod works out
@@ -252,9 +252,10 @@ index 000000000..ce8e9b6f1
 +static bool isPlaying = true;
 +
 +// Mouse motion per pixel the mouse moved, and per tic an arrow key is held,
-+// both before the person's sensitivity
++// both before the person's sensitivity. The game turns about 0.18 degrees for
++// each unit, so an arrow key turns about 90 degrees a second.
 +static const double MOUSE_PER_PIXEL = 3.0;
-+static const double TURN_PER_TIC = 60.0;
++static const double TURN_PER_TIC = 15.0;
 +static const int KEY_LEFT_ARROW = 0x40000050;
 +static const int KEY_RIGHT_ARROW = 0x4000004f;
 +
