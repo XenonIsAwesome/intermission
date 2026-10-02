@@ -224,6 +224,9 @@ function engineRequest(root, id) {
       '-height', String(HEIGHT),
       '+vid_fullscreen', '0',
       '+vid_maxfps', '35',
+      // Odamex's macOS music player ignores volume changes, so it played on
+      // while muted between drop-ins; its built-in OPL synth mixes through SDL
+      '+snd_musicsystem', '4',
       '+cl_name', name,
       ...(isOffline ? ['+map', 'MAP01'] : ['+connect', SERVER]),
     ],
