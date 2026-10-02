@@ -36,20 +36,21 @@ To turn it off again, run `/intermission off`.
 
 ## Requirements
 
-- macOS 15 or later, on Apple silicon or Intel
+- macOS 15 or later, on Apple silicon or Intel, or Linux on x86_64 or arm64
+  (on Linux, turn with the arrow keys: the mouse can't be locked yet)
 - [Ghostty](https://ghostty.org) or [kitty](https://sw.kovidgoyal.net/kitty/),
   the terminals that can show the game's pixels
 - Claude Code 2.1.287 or later
 
 ## Controls
 
-Click the game to play. The click also locks the mouse for turning; Esc or ⌘
-releases it.
+Click the game to play. On macOS the click also locks the mouse for turning;
+Esc or ⌘ releases it.
 
 | | |
 | :- | :- |
 | Move | WASD or the arrow keys |
-| Turn | the mouse, once locked |
+| Turn | the mouse, once locked (macOS), or the left and right arrows |
 | Fire | left click |
 | Run forward | hold right click |
 | Open doors | space |

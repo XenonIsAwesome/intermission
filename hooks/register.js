@@ -22,6 +22,8 @@ const NAME_ENDS = ['Dev', 'Coder', 'Hacker', 'Intern', 'Marine', 'Imp']
 // kept between sessions in $.store
 let isOn = false
 let name = null
+// The engine build this machine runs, from uname: { system, arch }
+let target = null
 
 // Where play stands:
 //   idle      not playing, whether or not Claude is working
@@ -174,7 +176,12 @@ async function needsYou($) {
 }
 
 function enginePath(root) {
-  return root + '/dist/odamex.app/Contents/MacOS/odamex'
+  return root + (target?.system === 'Linux' ? '/dist/odamex' : '/dist/odamex.app/Contents/MacOS/odamex')
+}
+
+async function detectTarget($) {
+  const [system, arch] = (await $.process.run(['uname', '-sm'])).stdout.trim().split(' ')
+  target = { system, arch }
 }
 
 // Each plugin version downloads the engine built for it, once
@@ -187,19 +194,22 @@ function ensureEngine($) {
 
 async function downloadEngine($) {
   const root = $.plugin.root
+  if (!target) await detectTarget($)
   if (await $.fs.exists(enginePath(root))) return
   const showStatus = (text) => {
     downloadStatus = text
     $.ui.invalidate('ui.render')
   }
   try {
-    const [system, arch] = (await $.process.run(['uname', '-sm'])).stdout.trim().split(' ')
-    if (system !== 'Darwin') throw new Error('it runs on macOS for now')
+    if (!target) await detectTarget($)
+    const { system, arch } = target
+    if (system !== 'Darwin' && system !== 'Linux') throw new Error('it runs on macOS and Linux for now')
+    if (system === 'Linux' && arch !== 'x86_64' && arch !== 'aarch64') throw new Error('there is no build for ' + arch)
     const { version } = JSON.parse(await $.fs.read(root + '/.claude-plugin/plugin.json'))
     const archive = root + '/engine.tar.gz'
     showStatus('Downloading the game, about 40 MB…')
     const fetched = await $.process.run(
-      ['curl', '-fsSL', '--retry', '2', '-o', archive, RELEASES + '/v' + version + '/intermission-engine-macos-' + arch + '.tar.gz'],
+      ['curl', '-fsSL', '--retry', '2', '-o', archive, RELEASES + '/v' + version + '/intermission-engine-' + (system === 'Linux' ? 'linux' : 'macos') + '-' + arch + '.tar.gz'],
       { timeoutMs: 10 * 60 * 1000 },
     )
     if (fetched.exitCode !== 0) throw new Error(fetched.stderr.trim() || 'the download failed')
@@ -226,6 +236,7 @@ function engineRequest(root, id) {
       '+vid_maxfps', '35',
       // Odamex's macOS music player ignores volume changes, so it played on
       // while muted between drop-ins; its built-in OPL synth mixes through SDL
+      // on both platforms, and needs no MIDI codecs
       '+snd_musicsystem', '4',
       '+cl_name', name,
       ...(isOffline ? ['+map', 'MAP01'] : ['+connect', SERVER]),
@@ -320,6 +331,12 @@ async function runEngine($) {
   }
 }
 
+// The engine can only hold the cursor for mouse-look on macOS; on Linux turn
+// with the arrow keys
+function canLockMouse() {
+  return target?.system === 'Darwin'
+}
+
 function shmSource(name) {
   return { shm: name, format: 'rgb', width: WIDTH, height: HEIGHT }
 }
@@ -328,6 +345,7 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     isOn = (await $.store.get('isOn')) === true
     name = await $.store.get('name')
+    await detectTarget($)
     if (!name) {
       name = randomName()
       await $.store.set('name', name)
@@ -477,7 +495,7 @@ export function register(on) {
         ? Text({ bold: true, children: ["Claude's done · back in " + countdown] })
         : Text({
             dimColor: true,
-            children: ['Click the game to play and lock the mouse · Esc or ⌘ releases it · WASD or arrows · left click fires · right click runs · space opens'],
+            children: ['Click the game to play' + (canLockMouse() ? ' and lock the mouse · Esc or ⌘ releases it' : '') + ' · WASD or arrows · left click fires · right click runs · space opens'],
           })
     return Box({
       flexDirection: 'column',

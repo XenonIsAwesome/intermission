@@ -1,4 +1,4 @@
-# Builds the engine for each kind of Mac and attaches it to the GitHub release
+# Builds the engine for each kind of Mac and Linux machine and attaches it to the GitHub release
 # for the tag; the mod downloads the one it needs on first use. Tag a release
 # as v<version>, matching plugin.json.
 name: Release
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  engine:
+  engine-macos:
     strategy:
       matrix:
         include:
@@ -142,5 +142,128 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Both builds try to create the release; whichever is second finds it there
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "" || true
+          gh release upload "$GITHUB_REF_NAME" "$PACKAGE" --clobber
+
+  engine-linux:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      FREEDOOM: https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
+      FREEDOOM2_SHA256: a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b
+      SDL2_MIXER: SDL2_mixer-2.8.2
+      PACKAGE: intermission-engine-linux-${{ matrix.arch }}.tar.gz
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the tag matches plugin.json
+        run: test "v$(jq -r .version .claude-plugin/plugin.json)" = "$GITHUB_REF_NAME"
+
+      # Built on the oldest runner so the engine runs on older glibc too
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build patchelf libsdl2-dev libx11-dev libxext-dev \
+            libxft-dev libxinerama-dev libxcursor-dev libxfixes-dev libfontconfig1-dev libgl1-mesa-dev libcurl4-openssl-dev
+
+      - name: Build SDL2_mixer without codecs
+        run: |
+          curl -fsSL "https://github.com/libsdl-org/SDL_mixer/releases/download/release-${SDL2_MIXER#SDL2_mixer-}/$SDL2_MIXER.tar.gz" | tar -xz
+          cmake -S "$SDL2_MIXER" -B mixer-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/mixer" \
+            -DSDL2MIXER_SAMPLES=OFF -DSDL2MIXER_CMD=OFF -DSDL2MIXER_FLAC=OFF -DSDL2MIXER_GME=OFF \
+            -DSDL2MIXER_MOD=OFF -DSDL2MIXER_MP3=OFF -DSDL2MIXER_MIDI=OFF -DSDL2MIXER_OPUS=OFF \
+            -DSDL2MIXER_VORBIS=OFF -DSDL2MIXER_WAVPACK=OFF
+          cmake --build mixer-build -j"$(nproc)"
+          cmake --install mixer-build
+
+      - name: Get Odamex with our changes
+        run: |
+          git clone -q https://github.com/odamex/odamex.git odamex
+          git -C odamex checkout -q "$(cat engine/odamex-commit)"
+          git -C odamex submodule update -q --init --recursive --depth 1
+          git -C odamex apply ../engine/odamex.patch
+
+      - name: Build
+        run: |
+          cmake -S odamex -B odamex/build -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CLIENT=1 -DBUILD_SERVER=0 -DBUILD_LAUNCHER=0 -DBUILD_TESTS=0 -DODAMEX_NO_GITVER=1 \
+            -DUSE_INTERNAL_PNG=1 -DUSE_INTERNAL_ZSTD=1 \
+            -DSDL2_MIXER_INCLUDE_DIR="$PWD/mixer/include/SDL2" \
+            -DSDL2_MIXER_LIBRARY="$(ls "$PWD"/mixer/lib*/libSDL2_mixer-2.0.so.0)"
+          cmake --build odamex/build -j"$(nproc)"
+
+      # Players need no SDL installed: the engine carries its own copies and
+      # looks for them beside itself
+      - name: Bundle libraries
+        run: |
+          mkdir -p package/libs
+          bin=odamex/build/client/odamex
+          for lib in $(ldd "$bin" | awk '/libSDL2/ {print $3}'); do
+            cp -L "$lib" package/libs/
+          done
+          cp -L "$bin" package/odamex
+          patchelf --set-rpath '$ORIGIN/libs' package/odamex
+          for lib in package/libs/*; do patchelf --set-rpath '$ORIGIN' "$lib"; done
+
+      - name: Package
+        run: |
+          mkdir -p package/licenses freedoom
+          curl -fsSL -o freedoom.zip "$FREEDOOM"
+          unzip -q -j freedoom.zip '*/freedoom2.wad' '*/COPYING.txt' -d freedoom
+          echo "$FREEDOOM2_SHA256  freedoom/freedoom2.wad" | sha256sum -c
+          cp freedoom/freedoom2.wad package/
+
+          cp odamex/LICENSE package/licenses/odamex.txt
+          cp odamex/3RD-PARTY-LICENSES package/licenses/odamex-third-party.txt
+          for license in libpng/LICENSE fltk/COPYING minilzo/COPYING jsoncpp/LICENSE fmt/LICENSE \
+            protobuf/LICENSE portmidi/license.txt cpptrace/LICENSE libadlmidi/LICENSE libadlmidi/LICENSE.GPL-3.txt; do
+            cp "odamex/libraries/$license" "package/licenses/$(dirname "$license")-$(basename "$license")"
+          done
+          cp odamex/build/libraries/cpptrace-build/_deps/zstd-src/LICENSE package/licenses/zstd.txt
+          cp /usr/share/doc/libsdl2-2.0-0/copyright package/licenses/sdl2.txt
+          cp "$SDL2_MIXER/LICENSE.txt" package/licenses/sdl2-mixer.txt
+          cp freedoom/COPYING.txt package/licenses/freedoom.txt
+          cat > package/SOURCE.txt <<EOF
+          This engine is Odamex at commit $(cat engine/odamex-commit) with the changes in
+          https://github.com/jarrodwatts/intermission/blob/$GITHUB_REF_NAME/engine/odamex.patch applied.
+          Odamex's source, with the libraries it builds in, is at https://github.com/odamex/odamex.
+          SDL is at https://github.com/libsdl-org. The licenses are in licenses/.
+          EOF
+
+      - name: Check the packaged engine
+        run: |
+          ls package/libs
+          for lib in package/libs/*; do
+            case "$(basename "$lib")" in
+              libSDL2-*.so* | libSDL2_mixer-*.so*) ;;
+              *) echo "bundled $(basename "$lib"), whose license isn't in the package"; exit 1 ;;
+            esac
+          done
+          # Everything the engine needs must resolve, from the package or the system
+          ldd package/odamex | tee ldd.log
+          ! grep 'not found' ldd.log
+          printf '1 0\n' > input.txt
+          SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy \
+            INTERMISSION_FRAMES=/imci- INTERMISSION_INPUT="$PWD/input.txt" \
+            timeout 10 package/odamex \
+            -iwad package/freedoom2.wad -config "$PWD/check.cfg" -width 320 -height 200 +map MAP01 \
+            > frames.log 2>&1 || true
+          frames=$(grep -c '^@frame' frames.log || true)
+          echo "drew $frames frames"
+          test "$frames" -gt 10
+
+      - name: Archive
+        run: tar -czf "$PACKAGE" -C package .
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "" || true
           gh release upload "$GITHUB_REF_NAME" "$PACKAGE" --clobber
