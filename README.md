@@ -18,12 +18,21 @@ maps, with monsters left in so the server is never empty.
 
 ## Install
 
-```
-/plugin install intermission --marketplace jarrodwatts/intermission
-```
+1. Install the plugin:
 
-Then run `/intermission` to turn it on. The first time, it downloads the game,
-about 20 MB. `/intermission off` turns it off.
+   ```
+   /plugin install intermission --marketplace jarrodwatts/intermission
+   ```
+
+2. Turn it on:
+
+   ```
+   /intermission
+   ```
+
+   The first time, it downloads the game, about 20 MB.
+
+To turn it off again, run `/intermission off`.
 
 ## Requirements
 
