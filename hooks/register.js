@@ -570,6 +570,16 @@ export function register(on) {
           children: [Client({ key: 'input', module: './input.js', width: columns, height: rows })],
         }),
         status,
+        Button({
+          key: 'leave',
+          label: 'Leave the game',
+          plain: true,
+          onPress: async () => {
+            // Leaving mid-turn stays left until the next one
+            if (isTurnRunning) isDismissed = true
+            await $.ui.close({ id: PANE })
+          },
+        }),
       ],
     })
   })

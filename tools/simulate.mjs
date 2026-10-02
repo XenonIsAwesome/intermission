@@ -17,6 +17,7 @@
 // Control keys:  1  Claude starts working      2  Claude finishes
 //                3  Claude asks permission     4  you answer, Claude carries on
 //                5  you close the pane         6  /intermission play
+//                7  press the pane's button (Leave the game)
 //                Ctrl+C  quit
 // Game keys (through the real hooks/input.js, so held keys behave as they do
 // in Claude Code):  WASD or arrows move, space opens, j fires, k runs.
@@ -94,8 +95,13 @@ async function rerender() {
     props: { bodyColumns: Math.min(process.stdout.columns || 100, 100) },
   }, null)
   state.texts = []
+  state.buttons = []
   for (const node of walk(tree)) {
     if (node.type === 'Text') state.texts.push(node.props.children.join(''))
+    if (node.type === 'Button') {
+      state.buttons.push(node.props)
+      state.texts.push('[7] ' + node.props.label)
+    }
     if (node.type === 'Image') draw(node.props.source.shm, node.props.columns, node.props.rows)
   }
 }
@@ -310,6 +316,7 @@ if (!isAuto) {
     if (k === '3') await claude.askPermission()
     if (k === '4') await claude.carryOn()
     if (k === '5') await claude.personCloses()
+    if (k === '7') await state.buttons?.[0]?.onPress?.()
     if (k === '6') state.toast = ((await emit('command.run', { command: 'intermission', args: 'play' }, {})).text) ?? ''
     if (state.paneOpen) gameKey(k)
   })
@@ -399,8 +406,10 @@ if (isAuto) {
   check(readInput().startsWith('1 '), `engine told to play (file: "${readInput()}")`)
   await sleep(2500)
   check(state.paneOpen, 'it stays open, with no countdown to close it')
-  await claude.personCloses()
+  check(state.texts.some((t) => t.includes('Leave the game')), 'the pane offers a way to leave')
+  await state.buttons[0].onPress()
   await sleep(500)
+  check(!state.paneOpen, 'pressing it closes the pane')
   check(readInput() === '0 0', `engine told to stop once the pane closes (file: "${readInput()}")`)
   const all = []
   all.push(await cycle(1, { withPermission: false }))
