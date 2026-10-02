@@ -145,8 +145,8 @@ async function writeInput($) {
     if (!inputPath) return
     const isPlaying = phase === 'playing' || phase === 'countdown'
     await $.fs.write(inputPath, isPlaying ? '1 ' + clientLine + '\n' : '0 0\n')
-  })
-  await writing.catch(() => {})
+  }).catch(() => {})
+  await writing
 }
 
 // The pane closed, whoever closed it: spectate until the next drop-in
