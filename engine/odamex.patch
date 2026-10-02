@@ -142,10 +142,10 @@ index ec42dca..d805509 100644
  	event_t ev;
 diff --git a/client/sdl/i_inputfile.cpp b/client/sdl/i_inputfile.cpp
 new file mode 100644
-index 0000000..289035c
+index 0000000..ec551e7
 --- /dev/null
 +++ b/client/sdl/i_inputfile.cpp
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,160 @@
 +// Reads input from the intermission Claude Code mod.
 +//
 +// A terminal reports key presses but never releases, so the mod works out
@@ -162,7 +162,8 @@ index 0000000..289035c
 +// the cursor itself: each click locks it where it landed, and every tic the
 +// distance it travelled becomes mouse motion before it is put back. That needs
 +// no window and no permission. Esc or Command releases it, so leaving the game
-+// or switching apps never drags a locked cursor along.
++// or switching apps never drags a locked cursor along. While locked the cursor
++// is hidden; macOS shows it again if this process dies.
 +
 +#include "odamex.h"
 +
@@ -199,20 +200,36 @@ index 0000000..289035c
 +	return point;
 +}
 +
++// Undocumented, and the only way a process that isn't the frontmost app can
++// hide the cursor. If a macOS release drops it, the cursor simply stays shown.
++typedef int CGSConnectionID;
++extern "C" CGSConnectionID _CGSDefaultConnection(void);
++extern "C" CGError CGSSetConnectionProperty(CGSConnectionID, CGSConnectionID, CFStringRef, CFTypeRef);
++
++static void prepareCursor()
++{
++	static bool isPrepared = false;
++	if (isPrepared)
++		return;
++	// After a warp macOS ignores the mouse for a moment unless told not to
++	CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
++	CGEventSourceSetLocalEventsSuppressionInterval(source, 0.0);
++	CFRelease(source);
++	const CGSConnectionID connection = _CGSDefaultConnection();
++	CGSSetConnectionProperty(connection, connection, CFSTR("SetsCursorInBackground"), kCFBooleanTrue);
++	isPrepared = true;
++}
++
 +static void lockMouse()
 +{
-+	static bool isWarpDelayOff = false;
-+	if (!isWarpDelayOff)
-+	{
-+		// After a warp macOS ignores the mouse for a moment unless told not to
-+		CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
-+		CGEventSourceSetLocalEventsSuppressionInterval(source, 0.0);
-+		CFRelease(source);
-+		isWarpDelayOff = true;
-+	}
++	if (isLocked)
++		return;
++	prepareCursor();
 +	// A warp to a fractional point lands on a whole one, which would read as motion
 +	const CGPoint point = cursorPosition();
 +	lockedAt = CGPointMake(round(point.x), round(point.y));
++	// macOS counts hides, so hide once per lock and show once per release
++	CGDisplayHideCursor(kCGDirectMainDisplay);
 +	isLocked = true;
 +}
 +
@@ -224,6 +241,7 @@ index 0000000..289035c
 +	if (CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, KEY_ESCAPE) ||
 +		(flags & kCGEventFlagMaskCommand))
 +	{
++		CGDisplayShowCursor(kCGDirectMainDisplay);
 +		isLocked = false;
 +		return;
 +	}
