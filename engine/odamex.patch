@@ -18,10 +18,10 @@ index 8ecd952..79af2fc 100644
  # Client target
 diff --git a/client/sdl/i_frameexport.cpp b/client/sdl/i_frameexport.cpp
 new file mode 100644
-index 0000000..c609990
+index 0000000..a6eaa8a
 --- /dev/null
 +++ b/client/sdl/i_frameexport.cpp
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,105 @@
 +// Exports each finished frame for the intermission Claude Code mod.
 +//
 +// When INTERMISSION_FRAMES names a shared-memory prefix (such as "/im"), every
@@ -41,6 +41,7 @@ index 0000000..c609990
 +#include <unistd.h>
 +
 +#include "d_player.h"
++#include "i_inputfile.h"
 +#include "i_video.h"
 +
 +// Kills count monsters and players alike
@@ -70,7 +71,8 @@ index 0000000..c609990
 +{
 +	static const char* prefix = getenv("INTERMISSION_FRAMES");
 +	static unsigned frame = 0;
-+	if (!prefix || surface->getBitsPerPixel() != 32)
++	// Nobody sees frames while the person is handed back to Claude
++	if (!prefix || !I_IsPlaying() || surface->getBitsPerPixel() != 32)
 +		return;
 +
 +	char name[32];
@@ -159,21 +161,25 @@ index ec42dca..d805509 100644
  	event_t ev;
 diff --git a/client/sdl/i_inputfile.cpp b/client/sdl/i_inputfile.cpp
 new file mode 100644
-index 0000000..b6b49fe
+index 0000000..6bc41b5
 --- /dev/null
 +++ b/client/sdl/i_inputfile.cpp
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,235 @@
 +// Reads input from the intermission Claude Code mod.
 +//
 +// A terminal reports key presses but never releases, so the mod works out
 +// which keys count as held and writes that state, not a stream of events, to
 +// the file INTERMISSION_INPUT names. The file holds one line:
 +//
-+//   <clicks> <key> <key> ...
++//   <playing> <clicks> <key> <key> ...
 +//
-+// where clicks counts the clicks on the game so far and each key is an Odamex
-+// key code held right now. Each tic the changes are posted as Doom events.
-+// Without the variable this does nothing.
++// where playing is 0 while the person is handed back to Claude, clicks counts
++// the clicks on the game so far, and each key is an Odamex key code held right
++// now. Each tic the changes are posted as Doom events. Without the variable
++// this does nothing.
++//
++// Between drop-ins the engine stays connected as a silent spectator, so
++// dropping back in is instant and nobody is left standing in the open.
 +//
 +// A terminal can't capture the mouse either, but a native process can hold
 +// the cursor itself: each click locks it where it landed, and every tic the
@@ -192,7 +198,21 @@ index 0000000..b6b49fe
 +#include <set>
 +#include <unistd.h>
 +
++#include "c_cvars.h"
++#include "c_dispatch.h"
++#include "cl_main.h"
 +#include "d_main.h"
++#include "d_player.h"
++
++EXTERN_CVAR(snd_sfxvolume)
++EXTERN_CVAR(snd_musicvolume)
++
++static bool isPlaying = true;
++
++bool I_IsPlaying()
++{
++	return isPlaying;
++}
 +
 +static void postEvent(const event_t& ev)
 +{
@@ -251,6 +271,14 @@ index 0000000..b6b49fe
 +	isLocked = true;
 +}
 +
++static void releaseMouse()
++{
++	if (!isLocked)
++		return;
++	CGDisplayShowCursor(kCGDirectMainDisplay);
++	isLocked = false;
++}
++
 +static void postLockedMotion()
 +{
 +	if (!isLocked)
@@ -259,8 +287,7 @@ index 0000000..b6b49fe
 +	if (CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, KEY_ESCAPE) ||
 +		(flags & kCGEventFlagMaskCommand))
 +	{
-+		CGDisplayShowCursor(kCGDirectMainDisplay);
-+		isLocked = false;
++		releaseMouse();
 +		return;
 +	}
 +	const CGPoint point = cursorPosition();
@@ -275,9 +302,49 @@ index 0000000..b6b49fe
 +#else
 +
 +static void lockMouse() {}
++static void releaseMouse() {}
 +static void postLockedMotion() {}
 +
 +#endif
++
++static void setPlaying(bool isNowPlaying)
++{
++	static float sfxVolume = 0;
++	static float musicVolume = 0;
++	if (isNowPlaying == isPlaying)
++		return;
++	isPlaying = isNowPlaying;
++	if (isPlaying)
++	{
++		snd_sfxvolume.Set(sfxVolume);
++		snd_musicvolume.Set(musicVolume);
++	}
++	else
++	{
++		sfxVolume = snd_sfxvolume.value();
++		musicVolume = snd_musicvolume.value();
++		snd_sfxvolume.Set(0.0f);
++		snd_musicvolume.Set(0.0f);
++		releaseMouse();
++	}
++}
++
++// The server answers a join or spectate a moment later, so keep nudging the
++// game towards what the mod wants, once a second, until it gets there
++static void followPlaying()
++{
++	static int ticsUntilAsking = 0;
++	if (!connected || --ticsUntilAsking > 0)
++		return;
++	const bool isSpectating = consoleplayer().spectator;
++	if (isPlaying && isSpectating)
++		AddCommandString("join");
++	else if (!isPlaying && !isSpectating)
++		AddCommandString("spectate");
++	else
++		return;
++	ticsUntilAsking = TICRATE;
++}
 +
 +void I_ReadInputFile()
 +{
@@ -288,13 +355,14 @@ index 0000000..b6b49fe
 +	if (!path)
 +		return;
 +
-+	// Claude Code stops the engine when it closes the pane, but not if it dies
-+	// first, say with its terminal tab; then this process is handed to another
-+	// parent and should quit rather than play on unseen.
++	// Claude Code stops the engine when it no longer needs it, but not if it
++	// dies first, say with its terminal tab; then this process is handed to
++	// another parent and should quit rather than play on unseen.
 +	if (getppid() != claudeCode || getppid() == 1)
 +		exit(0);
 +
 +	postLockedMotion();
++	followPlaying();
 +
 +	char line[1024];
 +	FILE* file = fopen(path, "r");
@@ -308,6 +376,7 @@ index 0000000..b6b49fe
 +		return;
 +
 +	char* cursor = line;
++	setPlaying(strtol(cursor, &cursor, 10) != 0);
 +	const long nextClicks = strtol(cursor, &cursor, 10);
 +	std::set<int> next;
 +	for (char* end; ; cursor = end)
@@ -319,7 +388,7 @@ index 0000000..b6b49fe
 +	}
 +
 +	// A new input region counts from zero again, so any change is a new click
-+	if (nextClicks != clicks && nextClicks > 0)
++	if (isPlaying && nextClicks != clicks && nextClicks > 0)
 +		lockMouse();
 +	clicks = nextClicks;
 +
@@ -333,13 +402,16 @@ index 0000000..b6b49fe
 +}
 diff --git a/client/sdl/i_inputfile.h b/client/sdl/i_inputfile.h
 new file mode 100644
-index 0000000..56b8bcf
+index 0000000..d6113f9
 --- /dev/null
 +++ b/client/sdl/i_inputfile.h
-@@ -0,0 +1,3 @@
+@@ -0,0 +1,6 @@
 +#pragma once
 +
 +void I_ReadInputFile();
++
++// False while the mod has handed the person back to Claude
++bool I_IsPlaying();
 diff --git a/client/sdl/i_video_sdl20.cpp b/client/sdl/i_video_sdl20.cpp
 index ee3c799..d702cdc 100644
 --- a/client/sdl/i_video_sdl20.cpp

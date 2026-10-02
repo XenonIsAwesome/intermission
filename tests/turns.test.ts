@@ -2,9 +2,9 @@ import { expect, mock, test } from 'claude-code/testing'
 
 // Answers everything the mod asks of Claude Code, and counts the pane opening
 // and closing, which is what the person sees
-function stubClaudeCode(on, { isOn = true } = {}) {
+function stubClaudeCode(on, clock, { isOn = true } = {}) {
   const pane = { opens: 0, closes: 0 }
-  on('store.get', () => ({ value: isOn }))
+  on('store.get', ($, e) => ({ value: e.key === 'isOn' ? isOn : 'TestMarine' }))
   on('store.set', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
   on('session.start', () => ({ cwd: '/work' }))
@@ -19,8 +19,9 @@ function stubClaudeCode(on, { isOn = true } = {}) {
   })
   on('ui.toast', () => ({ value: undefined }))
   on('fs.write', () => ({ value: undefined }))
+  // The engine runs for longer than any test
   on('process.spawn', async function* () {
-    return { value: { code: 0, signal: null } }
+    await clock.sleep(60 * 60 * 1000)
   })
   on('ui.log', () => ({ value: undefined }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
@@ -42,7 +43,7 @@ const askPermission = ($) => $.tool.check({ tool: 'Bash', input: { command: 'rm 
 
 test('drops in once Claude has worked for two seconds', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'refactor auth' })
@@ -54,7 +55,7 @@ test('drops in once Claude has worked for two seconds', async ($, on) => {
 
 test('stays out of a turn that ends before the delay', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'hi' })
@@ -66,7 +67,7 @@ test('stays out of a turn that ends before the delay', async ($, on) => {
 
 test('stays out while intermission is off', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on, { isOn: false })
+  const pane = stubClaudeCode(on, clock, { isOn: false })
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'refactor auth' })
@@ -76,7 +77,7 @@ test('stays out while intermission is off', async ($, on) => {
 
 test('counts down three seconds when Claude finishes, then hands back', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'refactor auth' })
@@ -90,7 +91,7 @@ test('counts down three seconds when Claude finishes, then hands back', async ($
 
 test('hands back at once when the person interrupts Claude', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'refactor auth' })
@@ -101,7 +102,7 @@ test('hands back at once when the person interrupts Claude', async ($, on) => {
 
 test('keeps playing when a subagent finishes', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'refactor auth' })
@@ -113,7 +114,7 @@ test('keeps playing when a subagent finishes', async ($, on) => {
 
 test('hands back at once when Claude asks for permission', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'clean up' })
@@ -124,7 +125,7 @@ test('hands back at once when Claude asks for permission', async ($, on) => {
 
 test('drops back in once the permission prompt is answered', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'clean up' })
@@ -138,7 +139,7 @@ test('drops back in once the permission prompt is answered', async ($, on) => {
 
 test('a permission prompt during the countdown hands back at once', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = stubClaudeCode(on)
+  const pane = stubClaudeCode(on, clock)
   await startSession($)
 
   await $.turn.start({ turnId: 't1', text: 'clean up' })

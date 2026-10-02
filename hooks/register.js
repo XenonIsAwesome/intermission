@@ -6,9 +6,18 @@ const WIDTH = 640
 const HEIGHT = 360
 const DROP_IN_DELAY_MS = 2000
 const COUNTDOWN_SECONDS = 3
+const SERVER = '157.245.140.115:10666'
+// Between drop-ins the engine waits on the server as a spectator; after this
+// long it disconnects, so idle sessions don't hold the server's slots
+const AWAY_DISCONNECT_MS = 5 * 60 * 1000
 
-// Whether the person turned intermission on, kept between sessions in $.store
+const NAME_STARTS = ['Idle', 'Bored', 'Queued', 'Pending', 'Async', 'Blocked', 'Lazy']
+const NAME_ENDS = ['Dev', 'Coder', 'Hacker', 'Intern', 'Marine', 'Imp']
+
+// Whether the person turned intermission on, and their name in the game, both
+// kept between sessions in $.store
 let isOn = false
+let name = null
 
 // Where play stands:
 //   idle      not playing, whether or not Claude is working
@@ -23,11 +32,13 @@ let isWelcomeOpen = false
 let timer = null
 let countdown = 0
 
-// The running engine's output stream, the newest frame it wrote, and the file
-// it reads input from
+// The running engine's output stream, the newest frame it wrote, the file it
+// reads input from, the input region's last line, and the disconnect timer
 let engine = null
 let frame = null
 let inputPath = null
+let clientLine = '0'
+let awayTimer = null
 // Kills and deaths in the current or last round, as the engine reports them
 let score = null
 
@@ -59,7 +70,10 @@ async function dropIn($) {
     return
   }
   phase = 'playing'
-  if (!engine) void runEngine($)
+  awayTimer?.cancel()
+  awayTimer = null
+  if (engine) await writeInput($)
+  else void runEngine($)
 }
 
 // why, when given, heads the toast that sums up the round
@@ -85,6 +99,39 @@ function startCountdown($) {
   })
 }
 
+// The engine plays or spectates by the first number, and takes keys only in play
+async function writeInput($) {
+  if (!inputPath) return
+  const isPlaying = phase === 'playing' || phase === 'countdown'
+  await $.fs.write(inputPath, isPlaying ? '1 ' + clientLine + '\n' : '0 0\n')
+}
+
+// The pane closed, whoever closed it: spectate until the next drop-in
+async function goAway($) {
+  cancelTimer()
+  phase = 'idle'
+  isWelcomeOpen = false
+  frame = null
+  // The next input region counts its clicks from zero again
+  clientLine = '0'
+  if (!engine) return
+  await writeInput($)
+  awayTimer?.cancel()
+  awayTimer = $.clock.after(AWAY_DISCONNECT_MS, () => void stopEngine($))
+}
+
+async function stopEngine($) {
+  awayTimer?.cancel()
+  awayTimer = null
+  // Leaving the stream's loop is what stops the engine
+  if (engine) await engine.return()
+}
+
+function randomName() {
+  const pick = (words) => words[Math.floor(Math.random() * words.length)]
+  return pick(NAME_STARTS) + pick(NAME_ENDS) + (10 + Math.floor(Math.random() * 90))
+}
+
 // Claude is about to ask the person something, so they must see the prompt
 async function needsYou($) {
   if (phase === 'waiting') {
@@ -100,11 +147,14 @@ function engineRequest(root, id) {
     argv: [
       root + '/dist/odamex.app/Contents/MacOS/odamex',
       '-iwad', root + '/dist/freedoom2.wad',
+      // Its own settings, so a person's own Odamex setup is never touched
+      '-config', '/tmp/intermission-' + id + '.cfg',
       '-width', String(WIDTH),
       '-height', String(HEIGHT),
       '+vid_fullscreen', '0',
       '+vid_maxfps', '35',
-      '+map', 'MAP01',
+      '+cl_name', name,
+      '+connect', SERVER,
     ],
     env: {
       SDL_VIDEODRIVER: 'dummy',
@@ -119,10 +169,11 @@ function engineRequest(root, id) {
 async function runEngine($) {
   const id = Math.random().toString(36).slice(2, 6)
   inputPath = '/tmp/intermission-' + id + '.input'
-  await $.fs.write(inputPath, '0\n')
+  await writeInput($)
   score = { kills: 0, deaths: 0 }
   engine = $.process.spawn(engineRequest($.plugin.root, id))
   let pending = ''
+  let failure = null
   try {
     for await (const { stream, text } of engine) {
       if (stream !== 'stdout') continue
@@ -149,12 +200,19 @@ async function runEngine($) {
     }
   } catch (error) {
     $.ui.log('the game did not start: ' + error, { to: 'debug' })
-    $.ui.toast("intermission couldn't start the game")
-    await pullOut($)
+    failure = "intermission couldn't start the game"
   } finally {
     engine = null
     frame = null
     inputPath = null
+  }
+  // Ending on its own while someone plays means the engine quit or crashed.
+  // It also ends when this module unloads, and then there's nothing to close.
+  if (failure || phase === 'playing' || phase === 'countdown') {
+    try {
+      $.ui.toast(failure ?? 'intermission lost the game')
+      await pullOut($)
+    } catch {}
   }
 }
 
@@ -165,6 +223,11 @@ function shmSource(name) {
 export function register(on) {
   on('session.start', async ($, e, next) => {
     isOn = (await $.store.get('isOn')) === true
+    name = await $.store.get('name')
+    if (!name) {
+      name = randomName()
+      await $.store.set('name', name)
+    }
     await $.command.register({
       name: 'intermission',
       description: 'Play Doom while Claude works',
@@ -178,6 +241,7 @@ export function register(on) {
       isOn = false
       await $.store.set('isOn', false)
       if (phase !== 'idle') await pullOut($)
+      await stopEngine($)
       return { text: 'intermission is off.' }
     }
     isOn = true
@@ -239,16 +303,14 @@ export function register(on) {
   on('ui.close', async ($, e, next) => {
     if (e.id !== PANE) return next(e)
     if (e.origin?.kind === 'person' && isTurnRunning) isDismissed = true
-    cancelTimer()
-    phase = 'idle'
-    isWelcomeOpen = false
-    // Leaving the stream's loop is what stops the engine
-    if (engine) await engine.return()
+    await goAway($)
     return next(e)
   })
 
   on('ui.message', async ($, e) => {
-    if (e.element === 'input' && inputPath) await $.fs.write(inputPath, e.data.line + '\n')
+    if (e.element !== 'input') return {}
+    clientLine = e.data.line
+    await writeInput($)
     return {}
   })
 
@@ -287,7 +349,7 @@ export function register(on) {
     }
 
     if (e.surface !== 'terminal') return Text({ children: ['intermission needs the terminal, in Ghostty or kitty.'] })
-    if (!frame) return Text({ children: ['Loading…'] })
+    if (!frame) return Text({ children: ['Joining the game as ' + name + '…'] })
     // Terminal cells are about twice as tall as they are wide
     const columns = Math.min(255, e.props.bodyColumns)
     const rows = Math.max(1, Math.round((columns * HEIGHT) / WIDTH / 2))
