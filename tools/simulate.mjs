@@ -13,9 +13,11 @@
 //                  else this repo)
 //   --jitter       delay file writes by a random few ms, like a busy host
 //
-// Keys:  s  Claude starts working      f  Claude finishes
-//        p  Claude asks permission     r  you answer, Claude carries on
-//        x  you close the pane         q  quit
+// Control keys:  1  Claude starts working      2  Claude finishes
+//                3  Claude asks permission     4  you answer, Claude carries on
+//                5  you close the pane         Ctrl+C  quit
+// Game keys (through the real hooks/input.js, so held keys behave as they do
+// in Claude Code):  WASD or arrows move, space opens, j fires, k runs
 
 import cp from 'node:child_process'
 import fs from 'node:fs'
@@ -244,6 +246,38 @@ function shutdown(code = 0) {
   process.exit(code)
 }
 
+// ---- game input: the real input.js, on a pretend surface -------------------
+
+const surface = {
+  state: undefined,
+  setState(v) {
+    this.state = v
+  },
+  onKey: (fn) => (surface.keyHandler = fn),
+  onPointer: (fn) => (surface.pointerHandler = fn),
+  every: (ms, fn) => setInterval(fn, ms),
+  post: (data) => {
+    if (state.paneOpen) void emit('ui.message', { element: 'input', data })
+  },
+  elements: { Box: element('Box') },
+}
+const inputCopy = scratch + '/input.mjs'
+fs.copyFileSync(repo + '/hooks/input.js', inputCopy)
+;(await import(pathToFileURL(inputCopy).href)).default({}, surface)
+
+const KEY_NAMES = { '\x1b[A': 'up', '\x1b[B': 'down', '\x1b[C': 'right', '\x1b[D': 'left', '\r': 'return', '\t': 'tab' }
+function gameKey(k) {
+  if (k === 'j' || k === 'k') {
+    // A click: down now, up shortly after; right click is run
+    const button = k === 'j' ? 'left' : 'right'
+    surface.pointerHandler({ type: 'down', button })
+    setTimeout(() => surface.pointerHandler({ type: 'up', button }), 150)
+    return
+  }
+  const key = KEY_NAMES[k] ?? (k.length === 1 ? k : null)
+  if (key) surface.keyHandler({ key })
+}
+
 // ---- interactive -----------------------------------------------------------
 
 if (!isAuto) {
@@ -255,12 +289,13 @@ if (!isAuto) {
   process.stdin.resume()
   process.stdin.on('data', async (key) => {
     const k = key.toString()
-    if (k === 'q' || k === '\x03') shutdown()
-    if (k === 's') await claude.start()
-    if (k === 'f') await claude.finish()
-    if (k === 'p') await claude.askPermission()
-    if (k === 'r') await claude.carryOn()
-    if (k === 'x') await claude.personCloses()
+    if (k === '\x03') shutdown()
+    if (k === '1') await claude.start()
+    if (k === '2') await claude.finish()
+    if (k === '3') await claude.askPermission()
+    if (k === '4') await claude.carryOn()
+    if (k === '5') await claude.personCloses()
+    if (state.paneOpen) gameKey(k)
   })
   setInterval(() => {
     const rows = process.stdout.rows || 40
@@ -268,7 +303,7 @@ if (!isAuto) {
       `Claude: ${state.turnRunning ? 'WORKING' : 'idle'}   pane: ${state.paneOpen ? 'open' : 'closed'}   input file: "${readInput()}"`,
       ...state.texts.map((t) => '  ' + t.slice(0, (process.stdout.columns || 80) - 4)),
       state.toast ? 'toast: ' + state.toast : '',
-      '[s] start working  [f] finish  [p] permission ask  [r] answer  [x] close pane  [q] quit',
+      '[1] start working  [2] finish  [3] permission ask  [4] answer  [5] close pane  [Ctrl+C] quit   game: WASD/arrows, space, j fire, k run',
     ]
     process.stdout.write('\x1b7' + lines.map((l, i) => `\x1b[${rows - lines.length + 1 + i};1H\x1b[2K${l}`).join('') + '\x1b8')
   }, 200)
