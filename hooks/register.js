@@ -28,6 +28,8 @@ let countdown = 0
 let engine = null
 let frame = null
 let inputPath = null
+// Kills and deaths in the current or last round, as the engine reports them
+let score = null
 
 function cancelTimer() {
   timer?.cancel()
@@ -60,10 +62,16 @@ async function dropIn($) {
   if (!engine) void runEngine($)
 }
 
-async function pullOut($) {
+// why, when given, heads the toast that sums up the round
+async function pullOut($, why) {
   cancelTimer()
   phase = 'idle'
+  if (why && score) $.ui.toast(why + ' · ' + scoreText(score))
   await $.ui.close({ id: PANE })
+}
+
+function scoreText({ kills, deaths }) {
+  return kills + (kills === 1 ? ' kill, ' : ' kills, ') + deaths + (deaths === 1 ? ' death' : ' deaths')
 }
 
 function startCountdown($) {
@@ -73,7 +81,7 @@ function startCountdown($) {
   timer = $.clock.every(1000, () => {
     countdown -= 1
     if (countdown > 0) $.ui.invalidate('ui.render')
-    else void pullOut($)
+    else void pullOut($, "Claude's done")
   })
 }
 
@@ -83,7 +91,7 @@ async function needsYou($) {
     cancelTimer()
     phase = 'idle'
   } else if (phase !== 'idle') {
-    await pullOut($)
+    await pullOut($, 'Claude needs you')
   }
 }
 
@@ -112,6 +120,7 @@ async function runEngine($) {
   const id = Math.random().toString(36).slice(2, 6)
   inputPath = '/tmp/intermission-' + id + '.input'
   await $.fs.write(inputPath, '0\n')
+  score = { kills: 0, deaths: 0 }
   engine = $.process.spawn(engineRequest($.plugin.root, id))
   let pending = ''
   try {
@@ -121,6 +130,12 @@ async function runEngine($) {
       const lines = (pending + text).split('\n')
       pending = lines.pop()
       for (const line of lines) {
+        const scored = /^@score (\d+) (\d+)/.exec(line)
+        if (scored) {
+          score = { kills: Number(scored[1]), deaths: Number(scored[2]) }
+          $.ui.invalidate('ui.render')
+          continue
+        }
         const match = /^@frame (\S+)/.exec(line)
         if (!match) continue
         const isFirst = frame === null
@@ -235,6 +250,11 @@ export function register(on) {
   on('ui.message', async ($, e) => {
     if (e.element === 'input' && inputPath) await $.fs.write(inputPath, e.data.line + '\n')
     return {}
+  })
+
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    if (phase === 'idle' || phase === 'waiting' || !score) return next(e)
+    return next({ ...e, props: { ...e.props, suffix: ' · ' + scoreText(score) + '…' } })
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
